@@ -150,6 +150,14 @@ class BootModeParserTests(unittest.TestCase):
         self.assertIn('mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /newroot/run', content)
         self.assertIn('/newroot/run/kerynth/boot-mode', content)
 
+    def test_proc_is_mounted_before_kernel_command_line_is_read(self):
+        content = (ROOT / "initramfs" / "init").read_text(encoding="utf-8")
+        self.assertLess(
+            content.index("$BB mount -t proc proc /proc"),
+            content.index('cat /proc/cmdline'),
+        )
+        self.assertEqual(content.count("$BB mount -t proc proc /proc"), 1)
+
 
 
 if __name__ == "__main__":
