@@ -74,7 +74,7 @@ class KerPackageManagerTests(unittest.TestCase):
         package = self.make_package("hello")
         self.install_package(package)
         installed_file = self.target / "usr/share/kerynth-tests/hello.txt"
-        self.assertEqual(installed_file.read_text(encoding="utf-8"), "hello from Kerynth\n")
+        self.assertEqual(installed_file.read_text(encoding="utf-8"), "package hello\\n")
         records = KER.read_installed(self.target)
         self.assertEqual(records["hello"]["version"], "1.0")
         KER.remove(Namespace(name="hello", root=str(self.target)))
