@@ -1,6 +1,6 @@
-# Contributing to AETHER OS
+# Contributing to Kerynth OS
 
-AETHER OS is an early-stage independent Linux distribution. Contributions should be small, testable, and documented.
+Kerynth OS is an early-stage independent Linux distribution. Contributions should be small, testable, and documented.
 
 ## Engineering rules
 
