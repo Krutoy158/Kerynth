@@ -1,8 +1,8 @@
-# Kerynth OS Architecture
+# Kerynth Architecture
 
 ## 1. Distribution model
 
-Kerynth OS is assembled from upstream source projects using its own build definitions, package metadata, repository layout, installer, and release pipeline. It must not use another distribution's root filesystem, package database, or package manager as its foundation.
+Kerynth is assembled from upstream source projects using its own build definitions, package metadata, repository layout, installer, and release pipeline. It must not use another distribution's root filesystem, package database, or package manager as its foundation.
 
 The build host is only a tool provider. All target files are installed into an isolated staging root owned by the KERYNTH build system.
 
@@ -55,7 +55,7 @@ They are build/install profiles, not a promise that an arbitrary running system 
 
 ## 6. Package system
 
-The native package format is `.krt`. Package metadata must include at least:
+The native package format is `.ker`. Package metadata must include at least:
 
 - package name and version
 - target architecture
