@@ -61,7 +61,7 @@ Installed and Live preferences are deliberately stored in different locations. T
 
 ## Startup integration
 
-The desktop package will install a user-session autostart entry that runs `kerynth-welcome --startup` after the graphical session is ready. The app launcher checks the boot/session mode and calls the preference helper before opening the window. It must not run during early boot, on a text-only console, or before the user's desktop session exists.
+The desktop package will install `desktop/autostart/kerynth-welcome.desktop`. It runs `kerynth-welcome-startup` after the graphical session is ready. The dispatcher reads `/run/kerynth/boot-mode`, accepts only `live` or `installed`, and calls the preference helper before it starts `kerynth-welcome --startup`. Unknown or missing boot-mode markers cause a quiet no-op. It must not run during early boot, on a text-only console, or before the user's desktop session exists.
 
 The same package adds **Kerynth Welcome** to the desktop application menu. Launching it manually always opens the guide, even when automatic startup has been disabled.
 
@@ -95,4 +95,4 @@ The autostart integration must not create duplicate windows. If the user already
 
 ## Implementation status
 
-The local startup-preference helper and its unit tests are implemented. This document is the approved behavior specification. The graphical guide, session autostart entry, menu launcher, and integration with real settings applications are not yet implemented. They must not be marked complete until the desktop package exists and is tested in both Live and installed sessions.
+The local startup-preference helper, boot-mode dispatcher, autostart desktop-entry template, and their unit tests are implemented. This document is the approved behavior specification. The graphical guide, its application-menu launcher, and integration with real settings applications are not yet implemented. They must not be marked complete until the desktop package exists and is tested in both Live and installed sessions.

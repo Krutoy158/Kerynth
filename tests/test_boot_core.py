@@ -121,12 +121,18 @@ class BootModeParserTests(unittest.TestCase):
             "installer-manual",
             "installer-automatic",
             "live",
+            "installed",
         )
         for mode in modes:
             with self.subTest(mode=mode):
                 result = self.run_parser(f"quiet root=UUID=abc kerynth.mode={mode}")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, f"{mode}\n")
+
+    def test_installed_mode_is_not_an_extra_boot_menu_choice(self):
+        result = self.run_parser("quiet kerynth.mode=installed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "installed\\n")
 
     def test_parser_rejects_missing_unknown_and_duplicate_modes(self):
         invalid_cmdlines = (

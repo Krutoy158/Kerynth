@@ -1,0 +1,37 @@
+#!/bin/sh
+set -f
+
+MODE_FILE=${KERYNTH_BOOT_MODE_FILE:-/run/kerynth/boot-mode}
+if [ ! -r "$MODE_FILE" ]; then
+    exit 0
+fi
+
+BOOT_MODE=
+IFS= read -r BOOT_MODE < "$MODE_FILE" || [ -n "$BOOT_MODE" ] || exit 0
+
+case "$BOOT_MODE" in
+    live)
+        MODE=live
+        ;;
+    installed)
+        MODE=installed
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+if ! command -v kerynth-welcome-state >/dev/null 2>&1; then
+    exit 0
+fi
+
+if ! command -v kerynth-welcome >/dev/null 2>&1; then
+    exit 0
+fi
+
+PREFERENCE="$(kerynth-welcome-state should-show --mode "$MODE" 2>/dev/null)" || exit 0
+if [ "$PREFERENCE" != "show" ]; then
+    exit 0
+fi
+
+exec kerynth-welcome --startup

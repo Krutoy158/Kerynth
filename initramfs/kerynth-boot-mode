@@ -15,7 +15,7 @@ for item in $CMDLINE; do
             MODE_SEEN=1
             MODE="${item#kerynth.mode=}"
             case "$MODE" in
-                installer-manual|installer-automatic|live)
+                installer-manual|installer-automatic|live|installed)
                     ;;
                 *)
                     echo "Kerynth: unsupported boot mode." >&2

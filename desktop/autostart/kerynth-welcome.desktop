@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kerynth Welcome
+Comment=Open the Kerynth first-start guide
+Exec=kerynth-welcome-startup
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
