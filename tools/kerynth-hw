@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+ID_PATTERN = re.compile(r"^[0-9a-fA-F]{4}$")
+
+class HardwareError(Exception):
+    pass
+
+def read_text(path):
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+
+def valid_id(value):
+    return value is not None and ID_PATTERN.fullmatch(value) is not None
+
+def link_target_name(path):
+    try:
+        return path.resolve(strict=True).name
+    except OSError:
+        return None
+
+def scan_pci(root):
+    devices = root / "bus" / "pci" / "devices"
+    results = []
+    if not devices.is_dir():
+        return results
+    for device in sorted(devices.iterdir(), key=lambda item: item.name):
+        vendor = read_text(device / "vendor")
+        product = read_text(device / "device")
+        if not (valid_id(vendor.removeprefix("0x") if vendor else None) and valid_id(product.removeprefix("0x") if product else None)):
+            continue
+        driver = link_target_name(device / "driver")
+        module = link_target_name(device / "driver" / "module")
+        results.append({
+            "bus": "pci",
+            "address": device.name,
+            "vendor_id": vendor.removeprefix("0x").lower(),
+            "device_id": product.removeprefix("0x").lower(),
+            "class": read_text(device / "class"),
+            "modalias": read_text(device / "modalias"),
+            "driver": driver,
+            "module": module,
+        })
+    return results
+
+def scan_usb(root):
+    devices = root / "bus" / "usb" / "devices"
+    results = []
+    if not devices.is_dir():
+        return results
+    for device in sorted(devices.iterdir(), key=lambda item: item.name):
+        vendor = read_text(device / "idVendor")
+        product = read_text(device / "idProduct")
+        if not (valid_id(vendor) and valid_id(product)):
+            continue
+        results.append({
+            "bus": "usb",
+            "address": device.name,
+            "vendor_id": vendor.lower(),
+            "device_id": product.lower(),
+            "class": read_text(device / "bDeviceClass"),
+            "modalias": read_text(device / "modalias"),
+            "driver": link_target_name(device / "driver"),
+            "module": link_target_name(device / "driver" / "module"),
+        })
+    return results
+
+def scan(root):
+    root = Path(root)
+    return {
+        "schema_version": 1,
+        "telemetry": False,
+        "devices": scan_pci(root) + scan_usb(root),
+    }
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-hw")
+    parser.add_argument("--sys-root", default="/sys")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        result = scan(args.sys_root)
+    except (OSError, HardwareError) as exc:
+        print(f"kerynth-hw: error: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, sort_keys=True, indent=2))
+    else:
+        print("Kerynth hardware inventory (local only)")
+        print(f"Detected devices: {len(result['devices'])}")
+        for item in result["devices"]:
+            identity = f"{item['vendor_id']}:{item['device_id']}"
+            state = item["driver"] or "no driver bound"
+            module = f" ({item['module']})" if item["module"] else ""
+            print(f"{item['bus']} {item['address']} {identity} {state}{module}")
+        print("Telemetry: disabled")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
