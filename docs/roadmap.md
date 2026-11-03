@@ -97,6 +97,8 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M7 — Installer and accessibility
 
+- [x] Specify beginner-friendly Quick Profile Setup for the first local user account.
+- [ ] Implement local profile validation, username suggestion, and safe account creation.
 - [ ] Manual installation documentation and tooling.
 - [ ] Graphical installer.
 - [ ] Hardware compatibility summary.
