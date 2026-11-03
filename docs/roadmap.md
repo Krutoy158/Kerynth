@@ -114,7 +114,7 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [x] Specify the Kerynth Welcome first-run guide for Live and installed sessions.
 - [x] Implement a local per-user startup preference helper with separate persistent and volatile scopes.
 - [x] Add a session-aware startup dispatcher and XDG autostart desktop-entry template.
-- [ ] Build the graphical Kerynth Welcome application and its first-step pages.
+- [x] Add a Qt 6 graphical Kerynth Welcome prototype with first-step pages and optional tool launchers (desktop-session integration remains open).
 - [ ] Add graphical-session autostart and an application-menu launcher.
 - [ ] Integrate the guide with available settings, update, driver, app, backup, and help tools.
 - [ ] KDE Plasma profile.
