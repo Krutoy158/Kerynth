@@ -11,8 +11,17 @@ test:
 fetch:
 	$(PYTHON) tools/kerynth-build fetch
 
+rootfs:
+	$(PYTHON) tools/kerynth-build-pipeline rootfs
+
+kernel:
+	$(PYTHON) tools/kerynth-build-pipeline kernel
+
 initramfs:
-	$(PYTHON) tools/kerynth-initramfs --root .kerynth-work/initramfs-root --output .kerynth-work/initramfs.cpio.gz
+	$(PYTHON) tools/kerynth-build-pipeline initramfs
+
+iso-stage:
+	$(PYTHON) tools/kerynth-build-pipeline iso-stage
 
 hardware:
 	$(PYTHON) tools/kerynth-hw --json
@@ -22,4 +31,6 @@ iso-check:
 
 iso:
 	$(PYTHON) tools/kerynth-iso build
-\nbuild:\n\t$(PYTHON) tools/kerynth-build-pipeline build\n
+
+build:
+	$(PYTHON) tools/kerynth-build-pipeline build
