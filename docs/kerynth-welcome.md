@@ -95,4 +95,4 @@ The autostart integration must not create duplicate windows. If the user already
 
 ## Implementation status
 
-The local startup-preference helper, boot-mode dispatcher, autostart desktop-entry template, and their unit tests are implemented. This document is the approved behavior specification. The graphical guide, its application-menu launcher, and integration with real settings applications are not yet implemented. They must not be marked complete until the desktop package exists and is tested in both Live and installed sessions.
+The local startup-preference helper, boot-mode dispatcher, autostart desktop-entry template, Qt 6 graphical guide prototype, application-menu launcher, and unit tests are present. CI compiles the Qt application. The current guide provides first-step pages and opens generic system settings or the software center only when those executables exist; it does not yet provide deep links to individual settings modules or detect every optional Kerynth component. Backup/recovery integration and full desktop-session tests remain open. The guide is a prototype, not yet a release-ready desktop package.
