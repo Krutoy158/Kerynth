@@ -30,7 +30,7 @@ This roadmap separates design work from implemented and tested functionality. A 
 ## M2 — Bootable core
 
 - [ ] Build upstream Linux kernel from pinned source.
-- [ ] Generate initramfs.
+- [x] Add deterministic `newc` CPIO + gzip initramfs archive builder and initial PID 1 handoff stub.\n- [ ] Complete real-root discovery, mount, and switch-root flow.\n- [ ] Generate initramfs from the selected kernel modules and firmware set.
 - [ ] Implement and test PID 1 behavior.
 - [ ] Provide console login and clean shutdown/reboot.
 - [ ] Boot in QEMU using a virtual disk.
