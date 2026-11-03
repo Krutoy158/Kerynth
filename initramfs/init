@@ -1,0 +1,14 @@
+#!/bin/busybox sh
+
+export PATH=/bin:/sbin
+/bin/busybox mount -t proc proc /proc
+/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev
+
+if [ -x /sbin/init ]; then
+    exec /sbin/init
+fi
+
+/bin/busybox echo "Kerynth: /sbin/init is missing from the real root."
+/bin/busybox echo "Emergency shell is available. Type 'poweroff' to stop."
+exec /bin/busybox sh
