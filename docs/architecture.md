@@ -92,6 +92,10 @@ The installer must:
 - never silently replace another operating system's bootloader entry
 - provide a recovery path and installation log
 
+## 8.1 First-user profile setup
+
+The installer must offer a beginner-friendly Quick Profile Setup that creates one local personal account. It collects a display name, an editable username suggestion, and a password entered twice. It does not require email, phone, cloud sign-in, security questions, or a separate root password. The first user performs administrative work through explicit sudo authorization. Passwords are passed directly to the account service and must never appear in logs, summaries, telemetry, or generated configuration. See `docs/quick-profile.md` for validation, rollback, privacy, and acceptance requirements.
+
 ## 9. Privacy and diagnostics
 
 Kerynth contains no telemetry, analytics, tracking identifiers, or diagnostic upload mechanism. The operating system must not send usage, hardware inventory, crash, or application data to Kerynth or third parties. Troubleshooting logs remain local and under the user's control. Network access is limited to explicitly requested operations such as package downloads and system updates.
