@@ -132,7 +132,8 @@ def boot_live(iso, qemu, qemu_img, mkfs, timeout):
             monitor_command(monitor, "sendkey down")
             monitor_command(monitor, "sendkey ret")
             output = receive_until(serial, b"KERYNTH BASE SYSTEM READY", timeout, process)
-            time.sleep(2)\n            serial.sendall(b"id\n")
+            time.sleep(2)
+            serial.sendall(b"id\n")
             output += receive_until(serial, b"uid=1000", 15, process)
         after = digest(sentinel)
         if before != after:
