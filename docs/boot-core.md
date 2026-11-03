@@ -10,7 +10,7 @@
 
 ## Kernel command line
 
-The initramfs requires exactly one `kerynth.mode` parameter. Accepted values are `installer-manual`, `installer-automatic`, and `live`. Missing, duplicate, or unknown values are rejected before root discovery. The parser is shipped as executable `/lib/kerynth-boot-mode` and is checked by unit tests.
+The PID 1 script mounts `proc`, `sysfs`, and `devtmpfs` before it reads `/proc/cmdline`. The initramfs requires exactly one `kerynth.mode` parameter. Accepted values are `installer-manual`, `installer-automatic`, and `live`. Missing, duplicate, or unknown values are rejected before root discovery. The parser is shipped as executable `/lib/kerynth-boot-mode` and is checked by unit tests.
 
 After the selected root is mounted, the init script creates a memory-backed `/run` and writes the validated mode to `/run/kerynth/boot-mode`. The marker is volatile and is not written to the root filesystem. The target init system can use it to choose the appropriate installer or Live startup flow.
 
