@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import os
+import select
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = (PROJECT_ROOT / ".kerynth-work").resolve()
+
+
+class SmokeError(Exception):
+    pass
+
+
+def fail(message):
+    raise SmokeError(message)
+
+
+def run(command):
+    result = subprocess.run(
+        [str(item) for item in command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        fail("{} failed: {}".format(command[0], detail[-4000:]))
+    return result
+
+
+def wait_socket(path, process, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            fail("QEMU exited before creating its control sockets")
+        if Path(path).exists():
+            try:
+                connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                connection.connect(path)
+                connection.settimeout(1)
+                return connection
+            except OSError:
+                connection.close()
+        time.sleep(0.2)
+    fail("timed out waiting for QEMU socket: " + str(path))
+
+
+def monitor_command(connection, command):
+    connection.sendall((command + "\n").encode("ascii"))
+    time.sleep(0.25)
+    try:
+        return connection.recv(4096)
+    except socket.timeout:
+        return b""
+
+
+def receive_until(connection, marker, timeout, process):
+    data = bytearray()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            fail("QEMU exited while waiting for guest output")
+        readable, _, _ = select.select([connection], [], [], 1)
+        if not readable:
+            continue
+        try:
+            chunk = connection.recv(16384)
+        except OSError as exc:
+            fail("serial connection failed: " + str(exc))
+        if not chunk:
+            fail("guest serial connection closed")
+        data.extend(chunk)
+        if marker in data:
+            return bytes(data)
+    fail("guest did not report expected serial output: " + marker.decode("ascii"))
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def boot_live(iso, qemu, qemu_img, mkfs, timeout):
+    temporary = Path(tempfile.mkdtemp(prefix="kerynth-qemu-", dir=WORKSPACE))
+    process = None
+    monitor = None
+    serial = None
+    try:
+        sentinel = temporary / "sentinel.raw"
+        run([qemu_img, "create", "-f", "raw", sentinel, "64M"])
+        run([mkfs, "-F", "-q", "-t", "ext4", sentinel])
+        before = digest(sentinel)
+        monitor_path = temporary / "monitor.sock"
+        serial_path = temporary / "serial.sock"
+        qemu_log = temporary / "qemu.log"
+        with qemu_log.open("wb") as log:
+            command = [
+                qemu,
+                "-machine", "pc,accel=tcg",
+                "-cpu", "max",
+                "-smp", "2",
+                "-m", "2048",
+                "-boot", "d",
+                "-drive", "file={},media=cdrom,if=ide,readonly=on".format(iso),
+                "-drive", "file={},format=raw,if=virtio".format(sentinel),
+                "-display", "none",
+                "-serial", "unix:{},server=on,wait=off".format(serial_path),
+                "-monitor", "unix:{},server=on,wait=off".format(monitor_path),
+                "-no-reboot",
+                "-no-shutdown",
+            ]
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            monitor = wait_socket(monitor_path, process, 20)
+            serial = wait_socket(serial_path, process, 20)
+            try:
+                monitor.recv(4096)
+            except socket.timeout:
+                pass
+            time.sleep(3)
+            monitor_command(monitor, "sendkey down")
+            monitor_command(monitor, "sendkey down")
+            monitor_command(monitor, "sendkey ret")
+            output = receive_until(serial, b"KERYNTH BASE SYSTEM READY", timeout, process)
+            serial.sendall(b"id\n")
+            output += receive_until(serial, b"uid=1000", 15, process)
+        after = digest(sentinel)
+        if before != after:
+            fail("Live boot modified the attached virtual disk")
+        decoded = output.decode("utf-8", "replace")
+        if "uid=1000" not in decoded:
+            fail("Live console did not reach the unprivileged kerynth account")
+        print("QEMU Live boot: passed")
+        print("Unprivileged console: uid=1000 confirmed")
+        print("Attached virtual disk: SHA-256 unchanged")
+        print("Boot mode: Live System")
+    finally:
+        if serial is not None:
+            serial.close()
+        if monitor is not None:
+            monitor.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        shutil.rmtree(temporary, ignore_errors=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-qemu-smoke")
+    parser.add_argument("--iso", default=".kerynth-work/kerynth-x86_64.iso")
+    parser.add_argument("--timeout", type=int, default=120)
+    args = parser.parse_args(argv)
+    try:
+        candidate = Path(args.iso)
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        iso = candidate.resolve(strict=True)
+        if not iso.is_relative_to(WORKSPACE) or not iso.is_file() or iso.is_symlink():
+            fail("ISO must be a regular file inside .kerynth-work")
+        if args.timeout < 30 or args.timeout > 300:
+            fail("--timeout must be between 30 and 300 seconds")
+        qemu = shutil.which("qemu-system-x86_64")
+        qemu_img = shutil.which("qemu-img")
+        mkfs = shutil.which("mkfs.ext4")
+        if not qemu or not qemu_img or not mkfs:
+            fail("qemu-system-x86_64, qemu-img, and mkfs.ext4 are required")
+        boot_live(iso, qemu, qemu_img, mkfs, args.timeout)
+        return 0
+    except (SmokeError, OSError, subprocess.SubprocessError) as exc:
+        print("kerynth-qemu-smoke: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

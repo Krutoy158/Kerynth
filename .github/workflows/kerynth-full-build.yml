@@ -20,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: kerynth-full-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -35,7 +39,7 @@ jobs:
           sudo apt-get install -y \
             build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
             perl kmod xz-utils bzip2 gzip zlib1g-dev libzstd-dev \
-            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso
+            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso qemu-system-x86 qemu-utils e2fsprogs
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements-test.txt
       - name: Validate and test repository
@@ -66,6 +70,8 @@ jobs:
           make iso
           file .kerynth-work/kerynth-x86_64.iso
           sha256sum .kerynth-work/kerynth-x86_64.iso | tee .kerynth-work/kerynth-x86_64.iso.sha256
+      - name: Boot Live ISO in QEMU and verify disk safety
+        run: python3 tools/kerynth-qemu-smoke --timeout 150
       - name: Upload development ISO and build metadata
         if: success()
         uses: actions/upload-artifact@v4
@@ -78,6 +84,7 @@ jobs:
             .kerynth-work/kernel/release
             .kerynth-work/kernel/System.map
           if-no-files-found: error
+          include-hidden-files: true
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -86,3 +93,4 @@ jobs:
           path: |
             .kerynth-work/**
           if-no-files-found: ignore
+          include-hidden-files: true
