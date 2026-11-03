@@ -7,7 +7,7 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [x] Establish project identity and initial architecture.
 - [x] Record driver and firmware strategy.
 - [x] Record native package and Debian compatibility requirements.
-- [ ] Select and publish project code and documentation licenses.
+- [ ] Select and publish project code and documentation licenses.\n- [x] Define a user-first privilege model based on explicit sudo authorization.
 - [ ] Add contribution and security reporting policies.
 - [ ] Define supported source pinning and reproducible build metadata.
 
