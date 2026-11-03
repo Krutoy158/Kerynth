@@ -7,7 +7,8 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [x] Establish project identity and initial architecture.
 - [x] Record driver and firmware strategy.
 - [x] Record native package and Debian compatibility requirements.
-- [ ] Select and publish project code and documentation licenses.\n- [x] Define a user-first privilege model based on explicit sudo authorization.
+- [ ] Select and publish project code and documentation licenses.
+- [x] Define a user-first privilege model based on explicit sudo authorization.
 - [ ] Add contribution and security reporting policies.
 - [ ] Define supported source pinning and reproducible build metadata.
 
@@ -30,7 +31,9 @@ This roadmap separates design work from implemented and tested functionality. A 
 ## M2 — Bootable core
 
 - [ ] Build upstream Linux kernel from pinned source.
-- [x] Add deterministic `newc` CPIO + gzip initramfs archive builder and initial PID 1 handoff stub.\n- [ ] Complete real-root discovery, mount, and switch-root flow.\n- [ ] Generate initramfs from the selected kernel modules and firmware set.
+- [x] Add deterministic `newc` CPIO + gzip initramfs archive builder and initial PID 1 handoff stub.
+- [ ] Complete real-root discovery, mount, and switch-root flow.
+- [ ] Generate initramfs from the selected kernel modules and firmware set.
 - [ ] Implement and test PID 1 behavior.
 - [ ] Provide console login and clean shutdown/reboot.
 - [ ] Boot in QEMU using a virtual disk.
@@ -43,8 +46,13 @@ This roadmap separates design work from implemented and tested functionality. A 
 ## M3 — Hardware enablement
 
 - [ ] Kernel configuration for common storage, USB, input, graphics, network, and audio devices.
+- [ ] Test PCI/USB discovery against fixture sysfs trees and representative QEMU devices.
 - [ ] Firmware package inventory and license review.
-- [ ] Hardware identifier collection.
+- [x] Add read-only PCI/USB hardware inventory prototype (`tools/kerynth-hw`).
+- [ ] Match modaliases against modules built for the exact kernel release.
+- [ ] Build a reviewed firmware catalog with redistribution-license metadata.
+- [ ] Include baseline storage/network drivers and an offline driver path in the ISO.
+- [ ] Hardware-aware installer driver-bundle preview and user confirmation.
 - [ ] Driver and firmware diagnostic command.
 - [ ] Test matrix for selected physical devices and QEMU devices.
 
