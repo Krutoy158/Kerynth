@@ -5,10 +5,15 @@ import unittest
 from pathlib import Path
 
 import importlib.util
+from importlib.machinery import SourceFileLoader
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("kerynth_build", ROOT / "tools" / "kerynth-build")
+BUILD_TOOL_PATH = ROOT / "tools" / "kerynth-build"
+SPEC = importlib.util.spec_from_loader(
+    "kerynth_build",
+    SourceFileLoader("kerynth_build", str(BUILD_TOOL_PATH)),
+)
 BUILD_TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD_TOOL)
 
