@@ -4,7 +4,7 @@
 
 ## Support approach
 
-Kerynth OS will use upstream Linux kernel drivers and separately managed firmware packages. Hardware support is determined by the exact device ID, kernel version/configuration, firmware availability, and licensing terms.
+Kerynth will use upstream Linux kernel drivers and separately managed firmware packages. Hardware support is determined by the exact device ID, kernel version/configuration, firmware availability, and licensing terms.
 
 The project will not claim universal hardware compatibility.
 
