@@ -61,10 +61,10 @@ class BuildToolTests(unittest.TestCase):
     def test_sha256_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample"
-            path.write_bytes(b"Kerynth OS")
+            path.write_bytes(b"Kerynth")
             self.assertEqual(
                 BUILD_TOOL.sha256_file(path),
-                hashlib.sha256(b"Kerynth OS").hexdigest(),
+                hashlib.sha256(b"Kerynth").hexdigest(),
             )
 
     def test_lock_rejects_duplicate_names_and_filenames(self):
