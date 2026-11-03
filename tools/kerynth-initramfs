@@ -31,7 +31,8 @@ def collect(root):
         fail("staging root must be a directory")
     init = root / "init"
     busybox = root / "bin" / "busybox"
-    for required in (init, busybox):
+    mode_parser = root / "lib" / "kerynth-boot-mode"
+    for required in (init, busybox, mode_parser):
         try:
             info = required.lstat()
         except OSError as exc:
