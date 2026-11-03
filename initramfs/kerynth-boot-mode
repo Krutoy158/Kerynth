@@ -1,0 +1,33 @@
+#!/bin/busybox sh
+
+CMDLINE=${1-}
+MODE=
+MODE_SEEN=0
+
+for item in $CMDLINE; do
+    case "$item" in
+        kerynth.mode=*)
+            if [ "$MODE_SEEN" -ne 0 ]; then
+                echo "Kerynth: duplicate kerynth.mode parameter." >&2
+                exit 1
+            fi
+            MODE_SEEN=1
+            MODE="${item#kerynth.mode=}"
+            case "$MODE" in
+                installer-manual|installer-automatic|live)
+                    ;;
+                *)
+                    echo "Kerynth: unsupported boot mode." >&2
+                    exit 1
+                    ;;
+            esac
+            ;;
+    esac
+done
+
+if [ "$MODE_SEEN" -ne 1 ]; then
+    echo "Kerynth: missing kerynth.mode parameter." >&2
+    exit 1
+fi
+
+printf '%s\n' "$MODE"
