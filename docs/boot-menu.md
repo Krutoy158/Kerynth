@@ -2,7 +2,7 @@
 
 ## User-facing menu
 
-The first Kerynth ISO boot screen uses the Kerynth wordmark/logo and exactly three primary choices. All visible interface text is English.
+The first Kerynth ISO boot screen displays only the KER logo and exactly three primary choices. It must not show system specifications, hardware details, release diagnostics, usernames, network status, or other system information. All visible interface text is English.
 
 1. **Manual Installation**
 2. **Automatic Installation**
@@ -26,10 +26,10 @@ Boots the Kerynth live environment without starting the installer. Internal disk
 
 ## Visual direction
 
-- A distinctive Kerynth ASCII/art logo inspired by the visual presentation of Fastfetch: a recognizable custom emblem on the left, with the KERYNTH name and a compact system identity block beside it. It must be original Kerynth artwork, not a copied Fastfetch or another distribution logo.
-- The identity block may show static release/build identity and detected machine details only when available locally; it must not delay boot, require network access, or transmit hardware information.
-- Place the three menu choices clearly below or beside the branding, depending on the boot environment's resolution.
-- Clean, restrained layout with clear spacing and readable typography.
+- Display a distinctive, original **KER** logo as the sole branding element. The logo may use a custom emblem or stylized lettering, but must not include a Fastfetch-style system information block.
+- Show only the logo and the three menu choices: **Manual Installation**, **Automatic Installation**, and **Live System**.
+- Do not display hardware specifications, detected devices, release/build diagnostics, network information, accounts, or other system details on this screen.
+- Keep the layout clean, restrained, readable, and keyboard-accessible.
 - Glass styling may be used when the graphical boot environment supports it, but readability and accessibility take priority.
 - No telemetry, network requirement, account prompt, or automatic installation step at the boot menu.
 
