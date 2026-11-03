@@ -80,7 +80,7 @@ def receive_until(connection, marker, timeout, process):
         data.extend(chunk)
         if marker in data:
             return bytes(data)
-    fail("guest did not report expected serial output: " + marker.decode("ascii"))
+    fail("guest did not report expected serial output: " + marker.decode("ascii") + "\n" + data[-4000:].decode("utf-8", "replace"))
 
 
 def digest(path):
@@ -132,7 +132,7 @@ def boot_live(iso, qemu, qemu_img, mkfs, timeout):
             monitor_command(monitor, "sendkey down")
             monitor_command(monitor, "sendkey ret")
             output = receive_until(serial, b"KERYNTH BASE SYSTEM READY", timeout, process)
-            serial.sendall(b"id\n")
+            time.sleep(2)\n            serial.sendall(b"id\n")
             output += receive_until(serial, b"uid=1000", 15, process)
         after = digest(sentinel)
         if before != after:
@@ -169,7 +169,7 @@ def main(argv=None):
         if not candidate.is_absolute():
             candidate = PROJECT_ROOT / candidate
         iso = candidate.resolve(strict=True)
-        if not iso.is_relative_to(WORKSPACE) or not iso.is_file() or iso.is_symlink():
+        if candidate.is_symlink() or not iso.is_relative_to(WORKSPACE) or not iso.is_file():
             fail("ISO must be a regular file inside .kerynth-work")
         if args.timeout < 30 or args.timeout > 300:
             fail("--timeout must be between 30 and 300 seconds")

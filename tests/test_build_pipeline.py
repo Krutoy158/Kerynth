@@ -62,7 +62,7 @@ class BuildPipelineTests(unittest.TestCase):
             path.write_text("# CONFIG_STATIC is not set\n# CONFIG_INIT is not set\n", encoding="utf-8")
             PIPELINE.set_busybox_config(path, ROOT / "initramfs" / "busybox.config.fragment")
             content = path.read_text(encoding="utf-8")
-            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID"):
+            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID", "ID"):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
             self.assertIn("# CONFIG_TC is not set", content)
 

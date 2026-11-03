@@ -46,7 +46,7 @@ jobs:
         run: |
           make check
           make test
-          python3 -m py_compile tools/kerynth-build-pipeline
+          python3 -m py_compile tools/kerynth-build-pipeline tools/kerynth-qemu-smoke
           grub-script-check boot/grub/grub.cfg
       - name: Build minimal root filesystem
         run: make rootfs
