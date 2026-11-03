@@ -82,6 +82,14 @@ def validate_payload(payload):
             if member.uid!=0 or member.gid!=0: fail("payload ownership must be normalized: "+name)
             if member.type==tarfile.DIRTYPE and member.size!=0: fail("directory has data: "+name)
     finally: archive.close()
+    kinds = {member.name: member.type for member in members}
+    for name in kinds:
+        parent = PurePosixPath(name).parent
+        while str(parent) != ".":
+            parent_name = parent.as_posix()
+            if parent_name in kinds and kinds[parent_name] != tarfile.DIRTYPE:
+                fail("payload path is nested below a regular file: " + name)
+            parent = parent.parent
     return len(members)
 
 def make_payload(source):
@@ -235,9 +243,7 @@ def safe_target_path(root, relative, allow_missing=True):
     return root / PurePosixPath(relative)
 
 def package_database(root):
-    database = root / "var/lib/kerynth/packages"
-    if database.is_symlink():
-        fail("package database path must not be a symbolic link")
+    database = safe_target_path(root, "var/lib/kerynth/packages")
     database.mkdir(parents=True, exist_ok=True)
     if not database.resolve().is_relative_to(root):
         fail("package database escapes target root")
@@ -321,8 +327,17 @@ def install(args):
         for member, relative, target in entries:
             if member.isdir():
                 if not target.exists():
-                    target.mkdir(parents=True, exist_ok=True)
+                    parent = target.parent
+                    missing = []
+                    while parent != root and not parent.exists():
+                        missing.append(parent)
+                        parent = parent.parent
+                    for directory in reversed(missing):
+                        directory.mkdir()
+                        created_dirs.append(directory)
+                    target.mkdir()
                     created_dirs.append(target)
+                os.chmod(target, member.mode & 0o777)
                 continue
             parent = target.parent
             missing = []
