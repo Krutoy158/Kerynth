@@ -1,4 +1,4 @@
-# KERYNTH Package Format (.krt)
+# Kerynth Package Format (.krt)
 
 **Status:** design draft; no stable binary format or installer is implemented yet.
 
