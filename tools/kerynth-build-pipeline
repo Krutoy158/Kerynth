@@ -220,7 +220,7 @@ def write_base(root,developer_shell):
         content=content.replace("console::respawn:/etc/init.d/kerynth-session console","console::respawn:/bin/sh")
         content=content.replace("tty1::respawn:/etc/init.d/kerynth-session tty1","tty1::respawn:/bin/sh")
         path.write_text(content,encoding="utf-8")
-    for relative in ("var/lib/kerynth","var/log","run","tmp","root","home/kerynth"):
+    for relative in ("var/lib/kerynth","var/log","var/tmp","run","tmp","root","home","home/kerynth"):
         (root/relative).mkdir(parents=True,exist_ok=True)
 
 def build_rootfs(work,developer_shell=False,jobs=4):
@@ -231,7 +231,7 @@ def build_rootfs(work,developer_shell=False,jobs=4):
     root=temporary/"root"
     root.mkdir()
     try:
-        run([musl/"configure","--prefix=/usr","--syslibdir=/lib","--target=x86_64-linux-musl"],cwd=musl,env=environment())
+        run([musl/"configure","--prefix=/usr","--syslibdir=/lib"],cwd=musl,env=environment())
         run(["make","-j{}".format(jobs)],cwd=musl,env=environment())
         run(["make","DESTDIR="+str(root),"install"],cwd=musl,env=environment())
         run(["make","defconfig"],cwd=busybox,env=environment())
