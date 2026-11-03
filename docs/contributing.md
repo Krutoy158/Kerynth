@@ -18,6 +18,10 @@ Kerynth is an early-stage independent Linux distribution. Contributions should b
 
 - Prefer clear interfaces and explicit error handling.
 - Keep privileged operations small and auditable.
+- Treat the interactive user as the primary owner; root is reserved for explicit system administration.
+- Never require routine root sessions or run desktop applications and build jobs as root.
+- Explain privileged changes and request authorization before applying them.
+- Preserve user-owned data and configuration during package operations.
 - Avoid shell command construction from untrusted input.
 - Add tests for malformed input and failure paths, not only successful cases.
 - Keep comments useful and avoid duplicating what the code already says.
