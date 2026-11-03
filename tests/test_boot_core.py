@@ -36,10 +36,6 @@ class BootCoreTests(unittest.TestCase):
         self.assertIn('switch_root /newroot /sbin/init', content)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BootMenuTests(unittest.TestCase):
     def setUp(self):
         self.content = (ROOT / "boot" / "grub" / "grub.cfg").read_text(
@@ -95,3 +91,7 @@ class BootMenuTests(unittest.TestCase):
                 self.assertIsNotNone(match)
                 self.assertIn(mode, match.group(1))
                 self.assertIn("initrd /boot/initramfs.cpio.gz", match.group(1))
+
+
+if __name__ == "__main__":
+    unittest.main()
