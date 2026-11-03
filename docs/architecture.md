@@ -67,7 +67,7 @@ The native package format is `.ker`. Package metadata must include at least:
 
 Installation must verify signatures before extraction, reject path traversal and unsafe archive entries, detect file conflicts, stage changes, and record ownership in a local package database.
 
-The `.deb` compatibility layer is a separate importer. It inspects Debian control metadata and archive contents, maps only supported metadata, and reports unsupported dependencies, scripts, triggers, and filesystem assumptions. Conversion must not execute maintainer scripts.
+The `.deb` compatibility layer is required alongside `.ker`. It inspects Debian `ar` containers, control metadata, and data archives without executing package scripts. It imports only packages whose dependencies, paths, permissions, and metadata can be represented safely. Unsupported dependencies, maintainer scripts, triggers, conffile behavior, links, special files, and filesystem assumptions must be reported clearly. The first implementation is inspection and conversion preview, followed by safe conversion into `.ker`. Direct installation of arbitrary `.deb` files is not an initial goal.
 
 ## 7. Hardware and firmware
 
@@ -112,6 +112,12 @@ The system must follow these rules:
 
 The intended model is user-first administration: root maintains the system, while the user controls their own session and approves changes that affect it.
 
-## 10. Desktop
+## 10. Live environment and ISO
+
+Every testable Kerynth ISO must offer a Live mode that boots without installing to or modifying internal disks. Live mode must provide a usable console first; a graphical session is optional until the desktop profile is ready. Runtime changes should use temporary storage. Internal disks must not be auto-mounted for writing, boot entries must not be modified, and the installer must not start automatically. The user must be able to inspect hardware, network availability, boot logs, and system information, then shut down without persistent changes.
+
+The boot menu must distinguish **Live Kerynth** from **Install Kerynth**. CI must boot the ISO in QEMU, verify that Live mode reaches a usable state, and publish the ISO, SHA-256 checksum, and boot logs as workflow artifacts. No ISO should be presented as usable before these checks pass.
+
+## 11. Desktop
 
 A desktop is optional. KDE Plasma is a planned profile, not part of the minimal base system. The desktop profile will define its display manager, session, audio stack, network integration, portals, and hardware integration as a tested set.
