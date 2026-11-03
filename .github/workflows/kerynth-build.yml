@@ -24,5 +24,10 @@ jobs:
           sudo apt-get install -y grub-common
       - name: Validate GRUB menu syntax
         run: grub-script-check boot/grub/grub.cfg
+      - name: Validate GRUB menu syntax
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y grub-common
+          grub-script-check boot/grub/grub.cfg
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
