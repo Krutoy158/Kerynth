@@ -133,7 +133,10 @@ def fetch_source(source, workspace):
     cache = ensure_inside(workspace, workspace / "sources")
     cache.mkdir(parents=True, exist_ok=True)
 
-    target = ensure_inside(cache, cache / source["filename"])
+    raw_target = cache / source["filename"]
+    if raw_target.is_symlink():
+        raise BuildError(f"cache target must not be a symbolic link: {raw_target}")
+    target = ensure_inside(cache, raw_target)
     if target.exists():
         if target.is_file() and sha256_file(target) == source["sha256"]:
             return target, False
