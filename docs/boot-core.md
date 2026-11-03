@@ -10,6 +10,10 @@
 
 ## Kernel command line
 
+The initramfs requires exactly one `kerynth.mode` parameter. Accepted values are `installer-manual`, `installer-automatic`, and `live`. Missing, duplicate, or unknown values are rejected before root discovery. The parser is shipped as executable `/lib/kerynth-boot-mode` and is checked by unit tests.
+
+After the selected root is mounted, the init script creates a memory-backed `/run` and writes the validated mode to `/run/kerynth/boot-mode`. The marker is volatile and is not written to the root filesystem. The target init system can use it to choose the appropriate installer or Live startup flow.
+
 The init script supports:
 - `root=/dev/<device>`
 - `root=UUID=<uuid>`
@@ -20,4 +24,4 @@ The init script supports:
 
 UUID/LABEL discovery uses BusyBox `find` and `blkid`. The script mounts the root, moves `/dev`, `/proc`, and `/sys`, creates a temporary `/run`, and hands off to `/sbin/init` through BusyBox `switch_root`. The emergency shell is used when root discovery or handoff fails.
 
-This is an early boot implementation, not yet proven on a real kernel. Before marking the boot core complete, test direct device, UUID, LABEL, missing-device, unsupported-filesystem, and missing-init cases in QEMU. Ensure storage controllers and filesystems needed to reach the root are built into the kernel or loaded from initramfs. The current initramfs builder rejects symlinks, so staging must not rely on applet symlinks.
+This is an early boot implementation, not yet proven on a real kernel. The three GRUB entries currently provide the boot-mode argument, but do not yet provide a working ISO root device or mode-specific installer/Live userspace. Before marking the boot core complete, test mode parsing, direct device, UUID, LABEL, missing-device, unsupported-filesystem, and missing-init cases in QEMU. Ensure storage controllers and filesystems needed to reach the root are built into the kernel or loaded from initramfs. The current initramfs builder rejects symlinks, so staging must not rely on applet symlinks.
