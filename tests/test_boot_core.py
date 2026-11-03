@@ -38,3 +38,60 @@ class BootCoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootMenuTests(unittest.TestCase):
+    def setUp(self):
+        self.content = (ROOT / "boot" / "grub" / "grub.cfg").read_text(
+            encoding="utf-8"
+        )
+
+    def test_menu_has_exactly_three_user_choices(self):
+        import re
+
+        entries = re.findall(
+            r'^menuentry\\s+"([^"]+)"\\s+--id\\s+([a-z0-9-]+)\\s*\\{',
+            self.content,
+            flags=re.MULTILINE,
+        )
+        self.assertEqual(
+            entries,
+            [
+                ("Manual Installation", "kerynth-manual"),
+                ("Automatic Installation", "kerynth-automatic"),
+                ("Live System", "kerynth-live"),
+            ],
+        )
+
+    def test_menu_waits_for_user(self):
+        self.assertIn("set timeout=-1", self.content)
+        self.assertIn("set default=0", self.content)
+        self.assertNotIn("timeout_style", self.content)
+
+    def test_menu_shows_only_ker_branding(self):
+        self.assertIn('echo "  K   K  EEEEE  RRRR"', self.content)
+        import re
+
+        self.assertNotRegex(
+            self.content,
+            r"(?i)\\b(cpu|memory|ram|hostname|username|processor|gpu|network|release|version)\\b",
+        )
+
+    def test_menu_entries_use_distinct_boot_modes(self):
+        expected = {
+            "kerynth-manual": "kerynth.mode=installer-manual",
+            "kerynth-automatic": "kerynth.mode=installer-automatic",
+            "kerynth-live": "kerynth.mode=live",
+        }
+        import re
+
+        for entry_id, mode in expected.items():
+            with self.subTest(entry=entry_id):
+                match = re.search(
+                    rf'menuentry\\s+"[^"]+"\\s+--id\\s+{entry_id}\\s*\\{{(.*?)^\\}}',
+                    self.content,
+                    flags=re.MULTILINE | re.DOTALL,
+                )
+                self.assertIsNotNone(match)
+                self.assertIn(mode, match.group(1))
+                self.assertIn("initrd /boot/initramfs.cpio.gz", match.group(1))
