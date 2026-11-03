@@ -20,7 +20,7 @@ BUILD=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD)
 MAX_MEMBERS=250000
 MAX_EXTRACTED_SIZE=8*1024*1024*1024
-BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","blkid","mdev","reboot","poweroff")
+BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","blkid","mdev","reboot","poweroff","su","chown")
 KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_BLK_DEV_LOOP=y")
 
 class PipelineError(Exception):
@@ -182,7 +182,7 @@ def require_tools(names):
 
 def set_busybox_config(path):
     text=path.read_text(encoding="utf-8")
-    required=("STATIC","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","MDEV","REBOOT","POWEROFF")
+    required=("STATIC","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","MDEV","REBOOT","POWEROFF","SU","CHOWN")
     for symbol in required:
         pattern=re.compile(r"^(?:# )?CONFIG_"+re.escape(symbol)+r"(?:=.*| is not set)$",re.MULTILINE)
         replacement="CONFIG_"+symbol+"=y"
@@ -196,29 +196,31 @@ def write_base(root,developer_shell):
     contents={
         "etc/os-release":'NAME="Kerynth"\nPRETTY_NAME="Kerynth Linux"\nID=kerynth\nVERSION_ID=0.1.0-dev\nVERSION="0.1.0 Development"\nHOME_URL="https://github.com/Krutoy158/Kerynth"\n',
         "etc/hostname":"kerynth\n",
-        "etc/passwd":"root:x:0:0:root:/root:/bin/sh\n",
-        "etc/group":"root:x:0:\n",
-        "etc/shadow":"root:!:19000:0:99999:7:::\n",
+        "etc/passwd":"root:x:0:0:root:/root:/bin/sh\nkerynth:x:1000:1000:Kerynth Live:/home/kerynth:/bin/sh\n",
+        "etc/group":"root:x:0:\nusers:x:1000:kerynth\n",
+        "etc/shadow":"root:!:19000:0:99999:7:::\nkerynth:!:19000:0:99999:7:::\n",
         "etc/fstab":"proc /proc proc nosuid,nodev,noexec 0 0\nsysfs /sys sysfs nosuid,nodev,noexec 0 0\ndevtmpfs /dev devtmpfs mode=0755,nosuid 0 0\ntmpfs /run tmpfs mode=0755,nosuid,nodev 0 0\n",
-        "etc/inittab":"::sysinit:/etc/init.d/rcS\n::shutdown:/etc/init.d/rcK\nconsole::respawn:/sbin/getty -L 115200 console vt100\ntty1::respawn:/sbin/getty -L 115200 tty1 vt100\n",
+        "etc/inittab":"::sysinit:/etc/init.d/rcS\n::shutdown:/etc/init.d/rcK\nconsole::respawn:/etc/init.d/kerynth-session console\ntty1::respawn:/etc/init.d/kerynth-session tty1\n",
         "etc/motd":"KERYNTH LINUX\nMinimal x86_64 development system\n",
-        "etc/init.d/rcS":"#!/bin/sh\nexport PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nmkdir -p /proc /sys /dev /run /tmp /var/tmp /root /var/log /var/lib/kerynth\nmount -t proc proc /proc 2>/dev/null || true\nmount -t sysfs sysfs /sys 2>/dev/null || true\nmount -t devtmpfs devtmpfs /dev 2>/dev/null || true\nmount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true\nhostname Kerynth\nprintf '\\nKERYNTH BASE SYSTEM READY\\n'\n",
-        "etc/init.d/rcK":"#!/bin/sh\nsync\n"
+        "etc/init.d/rcS":"#!/bin/sh\nexport PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nmkdir -p /proc /sys /dev /run /tmp /var/tmp /root /var/log /var/lib/kerynth /home\nmount -t proc proc /proc 2>/dev/null || true\nmount -t sysfs sysfs /sys 2>/dev/null || true\nmount -t devtmpfs devtmpfs /dev 2>/dev/null || true\nmount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true\nMODE=$(cat /run/kerynth/boot-mode 2>/dev/null)\ncase \"$MODE\" in\n    live|installer-manual|installer-automatic)\n        mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp 2>/dev/null || true\n        mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /var/log 2>/dev/null || true\n        mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /var/tmp 2>/dev/null || true\n        mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /home 2>/dev/null || true\n        mkdir -p /home/kerynth\n        chown 1000:1000 /home/kerynth\n        chmod 0700 /home/kerynth\n        ;;\nesac\nhostname Kerynth\nprintf \'\\nKERYNTH BASE SYSTEM READY\\n\'\n",
+        "etc/init.d/rcK":"#!/bin/sh\nsync\n",
+        "etc/init.d/kerynth-session":"#!/bin/sh\nMODE=$(cat /run/kerynth/boot-mode 2>/dev/null)\ncase \"$MODE\" in\n    live) exec su -l kerynth ;;\n    installer-manual|installer-automatic) exec /usr/sbin/kerynth-installer \"$MODE\" ;;\n    *) exec /sbin/getty -L 115200 \"$1\" vt100 ;;\nesac\n",
+        "usr/sbin/kerynth-installer":"#!/bin/sh\nprintf \'KERYNTH INSTALLER\\n\'\nprintf \'The installer core is not implemented in this development image.\\n\'\nprintf \'No disks have been modified.\\n\'\nexec su -l kerynth\n"
     }
     for relative,content in contents.items():
         path=root/relative
         path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text(content,encoding="utf-8")
-    os.chmod(root/"etc/init.d/rcS",0o755)
-    os.chmod(root/"etc/init.d/rcK",0o755)
+    for relative in ("etc/init.d/rcS","etc/init.d/rcK","etc/init.d/kerynth-session","usr/sbin/kerynth-installer"):
+        os.chmod(root/relative,0o755)
     os.chmod(root/"etc/shadow",0o600)
     if developer_shell:
         path=root/"etc/inittab"
         content=path.read_text(encoding="utf-8")
-        content=content.replace("console::respawn:/sbin/getty -L 115200 console vt100","console::respawn:/bin/sh")
-        content=content.replace("tty1::respawn:/sbin/getty -L 115200 tty1 vt100","tty1::respawn:/bin/sh")
+        content=content.replace("console::respawn:/etc/init.d/kerynth-session console","console::respawn:/bin/sh")
+        content=content.replace("tty1::respawn:/etc/init.d/kerynth-session tty1","tty1::respawn:/bin/sh")
         path.write_text(content,encoding="utf-8")
-    for relative in ("var/lib/kerynth","var/log","run","tmp","root"):
+    for relative in ("var/lib/kerynth","var/log","run","tmp","root","home/kerynth"):
         (root/relative).mkdir(parents=True,exist_ok=True)
 
 def build_rootfs(work,developer_shell=False,jobs=4):
