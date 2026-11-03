@@ -8,21 +8,21 @@ import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("aether_build", ROOT / "tools" / "aether-build")
+SPEC = importlib.util.spec_from_file_location("kerynth_build", ROOT / "tools" / "kerynth-build")
 BUILD_TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD_TOOL)
 
 
 class BuildToolTests(unittest.TestCase):
     def test_default_configuration_is_valid(self):
-        config = BUILD_TOOL.load_config(ROOT / "aether.toml")
+        config = BUILD_TOOL.load_config(ROOT / "kerynth.toml")
         self.assertEqual(config["architecture"], "x86_64")
-        self.assertEqual(config["workspace"], (ROOT / ".aether-work").resolve())
+        self.assertEqual(config["workspace"], (ROOT / ".kerynth-work").resolve())
 
     def test_workspace_cannot_escape_project(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config = root / "aether.toml"
+            config = root / "kerynth.toml"
             config.write_text(
                 '[build]\narchitecture = "x86_64"\nworkspace = "../outside"\n',
                 encoding="utf-8",
@@ -56,10 +56,10 @@ class BuildToolTests(unittest.TestCase):
     def test_sha256_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample"
-            path.write_bytes(b"AETHER OS")
+            path.write_bytes(b"Kerynth OS")
             self.assertEqual(
                 BUILD_TOOL.sha256_file(path),
-                hashlib.sha256(b"AETHER OS").hexdigest(),
+                hashlib.sha256(b"Kerynth OS").hexdigest(),
             )
 
     def test_lock_rejects_duplicate_names_and_filenames(self):
