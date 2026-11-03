@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+import argparse
+import importlib.util
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+from pathlib import Path, PurePosixPath
+
+PROJECT_ROOT=Path(__file__).resolve().parents[1]
+BUILD_PATH=PROJECT_ROOT/"tools/kerynth-build"
+SPEC=importlib.util.spec_from_file_location("kerynth_build_module",BUILD_PATH)
+BUILD=importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BUILD)
+MAX_MEMBERS=250000
+MAX_EXTRACTED_SIZE=8*1024*1024*1024
+BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","blkid","mdev","reboot","poweroff")
+KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_BLK_DEV_LOOP=y")
+
+class PipelineError(Exception):
+    pass
+
+def fail(message):
+    raise PipelineError(message)
+
+def run(command,cwd=None,env=None,input_data=None,capture=False):
+    command=[str(item) for item in command]
+    print("+ "+" ".join(command),flush=True)
+    try:
+        result=subprocess.run(command,cwd=cwd,env=env,input=input_data,capture_output=capture,text=False,check=False)
+    except OSError as exc:
+        raise PipelineError("cannot execute {}: {}".format(command[0],exc)) from exc
+    if result.returncode:
+        if capture:
+            detail=(result.stderr or result.stdout or b"").decode("utf-8","replace")[-4000:]
+            fail("{} failed with status {}: {}".format(command[0],result.returncode,detail))
+        fail("{} failed with status {}".format(command[0],result.returncode))
+    return result
+
+def environment():
+    env=os.environ.copy()
+    env.update({"LC_ALL":"C","LANG":"C","SOURCE_DATE_EPOCH":"1","KBUILD_BUILD_TIMESTAMP":"1970-01-01 00:00:01","KBUILD_BUILD_USER":"kerynth","KBUILD_BUILD_HOST":"builder"})
+    return env
+
+def workspace():
+    return BUILD.load_config(PROJECT_ROOT/"kerynth.toml")["workspace"]
+
+def source_lock():
+    return {item["name"]:item for item in BUILD.load_lock(PROJECT_ROOT/"sources.lock")}
+
+def safe_name(raw):
+    if not isinstance(raw,str) or raw.startswith("/") or "\\" in raw:
+        fail("unsafe archive path: "+repr(raw))
+    name=raw
+    while name.startswith("./"):
+        name=name[2:]
+    name=name.rstrip("/")
+    if name in ("","."):
+        return PurePosixPath()
+    parts=name.split("/")
+    if any(part in ("",".","..") for part in parts) or re.match(r"^[A-Za-z]:",parts[0]):
+        fail("unsafe archive path: "+raw)
+    return PurePosixPath(*parts)
+
+def safe_link(path,target):
+    if not isinstance(target,str) or not target or target.startswith("/") or "\\" in target:
+        return False
+    stack=list(path.parts[:-1])
+    for part in PurePosixPath(target).parts:
+        if part in ("","."):
+            continue
+        if part=="..":
+            if not stack:
+                return False
+            stack.pop()
+        else:
+            stack.append(part)
+    return True
+
+def fetch_extract(name,work):
+    entries=source_lock()
+    if name not in entries:
+        fail("source is not pinned in sources.lock: "+name)
+    source=entries[name]
+    archive,_=BUILD.fetch_source(source,work)
+    parent=work/"sources-unpacked"
+    parent.mkdir(parents=True,exist_ok=True)
+    destination=parent/name
+    marker=destination/".kerynth-source.json"
+    expected={"name":name,"filename":source["filename"],"sha256":source["sha256"]}
+    if destination.exists():
+        if destination.is_symlink() or not destination.is_dir():
+            fail("source destination is not a directory: "+str(destination))
+        try:
+            if json.loads(marker.read_text(encoding="utf-8"))==expected:
+                return destination
+        except (OSError,json.JSONDecodeError):
+            pass
+        fail("source directory exists without a matching lock marker: "+str(destination))
+    temporary=Path(tempfile.mkdtemp(prefix=".kerynth-unpack-",dir=parent))
+    tree=temporary/"tree"
+    tree.mkdir()
+    seen={}
+    links=[]
+    roots=set()
+    total=0
+    try:
+        with tarfile.open(archive,mode="r:*") as tar:
+            members=tar.getmembers()
+            if not members or len(members)>MAX_MEMBERS:
+                fail("archive member count is outside the allowed range")
+            for member in members:
+                relative=safe_name(member.name)
+                if not relative.parts:
+                    if member.isdir():
+                        continue
+                    fail("invalid archive root entry")
+                roots.add(relative.parts[0])
+                if len(relative.parts)==1 and member.isdir():
+                    continue
+                relative=PurePosixPath(*relative.parts[1:])
+                if not relative.parts:
+                    continue
+                name=relative.as_posix()
+                if name in seen:
+                    if member.isdir() and seen[name]=="dir":
+                        continue
+                    fail("duplicate archive path: "+name)
+                if member.mode&(stat.S_ISUID|stat.S_ISGID):
+                    fail("archive contains setuid/setgid entry: "+name)
+                target=tree.joinpath(*relative.parts)
+                if member.isdir():
+                    seen[name]="dir"
+                    target.mkdir(parents=True,exist_ok=True)
+                elif member.isfile():
+                    total+=member.size
+                    if member.size<0 or total>MAX_EXTRACTED_SIZE:
+                        fail("archive exceeds the extraction size limit")
+                    seen[name]="file"
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    stream=tar.extractfile(member)
+                    if stream is None:
+                        fail("cannot read archive member: "+name)
+                    with stream,target.open("xb") as output:
+                        shutil.copyfileobj(stream,output,1024*1024)
+                    os.chmod(target,member.mode&0o755)
+                elif member.issym():
+                    if not safe_link(relative,member.linkname):
+                        fail("archive contains escaping symbolic link: "+name)
+                    seen[name]="link"
+                    links.append((relative,member.linkname))
+                else:
+                    fail("unsupported archive entry type: "+name)
+        if len(roots)!=1:
+            fail("archive must contain exactly one top-level directory")
+        for relative,target_value in links:
+            target=tree.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True,exist_ok=True)
+            os.symlink(target_value,target)
+        (tree/".kerynth-source.json").write_text(json.dumps(expected,sort_keys=True)+"\n",encoding="utf-8")
+        os.replace(tree,destination)
+        return destination
+    except (tarfile.TarError,OSError) as exc:
+        raise PipelineError("source extraction failed: "+str(exc)) from exc
+    finally:
+        shutil.rmtree(temporary,ignore_errors=True)
+
+def require_tools(names):
+    missing=[name for name in names if shutil.which(name) is None]
+    if missing:
+        fail("missing build dependencies: "+", ".join(missing))
+
+def set_busybox_config(path):
+    text=path.read_text(encoding="utf-8")
+    required=("STATIC","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","MDEV","REBOOT","POWEROFF")
+    for symbol in required:
+        pattern=re.compile(r"^(?:# )?CONFIG_"+re.escape(symbol)+r"(?:=.*| is not set)$",re.MULTILINE)
+        replacement="CONFIG_"+symbol+"=y"
+        if pattern.search(text):
+            text=pattern.sub(replacement,text)
+        else:
+            text+=replacement+"\n"
+    path.write_text(text,encoding="utf-8")
+
+def write_base(root,developer_shell):
+    contents={
+        "etc/os-release":'NAME="Kerynth"\nPRETTY_NAME="Kerynth Linux"\nID=kerynth\nVERSION_ID=0.1.0-dev\nVERSION="0.1.0 Development"\nHOME_URL="https://github.com/Krutoy158/Kerynth"\n',
+        "etc/hostname":"kerynth\n",
+        "etc/passwd":"root:x:0:0:root:/root:/bin/sh\n",
+        "etc/group":"root:x:0:\n",
+        "etc/shadow":"root:!:19000:0:99999:7:::\n",
+        "etc/fstab":"proc /proc proc nosuid,nodev,noexec 0 0\nsysfs /sys sysfs nosuid,nodev,noexec 0 0\ndevtmpfs /dev devtmpfs mode=0755,nosuid 0 0\ntmpfs /run tmpfs mode=0755,nosuid,nodev 0 0\n",
+        "etc/inittab":"::sysinit:/etc/init.d/rcS\n::shutdown:/etc/init.d/rcK\nconsole::respawn:/sbin/getty -L 115200 console vt100\ntty1::respawn:/sbin/getty -L 115200 tty1 vt100\n",
+        "etc/motd":"KERYNTH LINUX\nMinimal x86_64 development system\n",
+        "etc/init.d/rcS":"#!/bin/sh\nexport PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nmkdir -p /proc /sys /dev /run /tmp /var/tmp /root /var/log /var/lib/kerynth\nmount -t proc proc /proc 2>/dev/null || true\nmount -t sysfs sysfs /sys 2>/dev/null || true\nmount -t devtmpfs devtmpfs /dev 2>/dev/null || true\nmount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true\nhostname Kerynth\nprintf '\\nKERYNTH BASE SYSTEM READY\\n'\n",
+        "etc/init.d/rcK":"#!/bin/sh\nsync\n"
+    }
+    for relative,content in contents.items():
+        path=root/relative
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(content,encoding="utf-8")
+    os.chmod(root/"etc/init.d/rcS",0o755)
+    os.chmod(root/"etc/init.d/rcK",0o755)
+    os.chmod(root/"etc/shadow",0o600)
+    if developer_shell:
+        path=root/"etc/inittab"
+        content=path.read_text(encoding="utf-8")
+        content=content.replace("console::respawn:/sbin/getty -L 115200 console vt100","console::respawn:/bin/sh")
+        content=content.replace("tty1::respawn:/sbin/getty -L 115200 tty1 vt100","tty1::respawn:/bin/sh")
+        path.write_text(content,encoding="utf-8")
+    for relative in ("var/lib/kerynth","var/log","run","tmp","root"):
+        (root/relative).mkdir(parents=True,exist_ok=True)
+
+def build_rootfs(work,developer_shell=False,jobs=4):
+    require_tools(("make","gcc","ar","ranlib"))
+    musl=fetch_extract("musl",work)
+    busybox=fetch_extract("busybox",work)
+    temporary=Path(tempfile.mkdtemp(prefix=".kerynth-rootfs-",dir=work))
+    root=temporary/"root"
+    root.mkdir()
+    try:
+        run([musl/"configure","--prefix=/usr","--syslibdir=/lib","--target=x86_64-linux-musl"],cwd=musl,env=environment())
+        run(["make","-j{}".format(jobs)],cwd=musl,env=environment())
+        run(["make","DESTDIR="+str(root),"install"],cwd=musl,env=environment())
+        run(["make","defconfig"],cwd=busybox,env=environment())
+        set_busybox_config(busybox/".config")
+        run(["make","oldconfig"],cwd=busybox,env=environment(),input_data=b"\n"*2048)
+        run(["make","-j{}".format(jobs)],cwd=busybox,env=environment())
+        binary=busybox/"busybox"
+        if not binary.is_file():
+            fail("BusyBox build produced no binary")
+        result=subprocess.run([str(binary),"--list"],capture_output=True,text=True,check=False)
+        if result.returncode:
+            fail("cannot inspect BusyBox applets")
+        missing=sorted(set(BUSYBOX_REQUIRED)-set(result.stdout.splitlines()))
+        if missing:
+            fail("BusyBox is missing required applets: "+", ".join(missing))
+        if shutil.which("readelf"):
+            headers=subprocess.run(["readelf","-l",str(binary)],capture_output=True,text=True,check=False)
+            if headers.returncode==0 and "INTERP" in headers.stdout:
+                fail("BusyBox is dynamically linked; static BusyBox is required")
+        run(["make","CONFIG_PREFIX="+str(root),"install"],cwd=busybox,env=environment())
+        write_base(root,developer_shell)
+        marker={"format":1,"architecture":"x86_64","libc":"musl-1.2.6","busybox":"1.38.0","developer_shell":bool(developer_shell)}
+        (root/".kerynth-rootfs.json").write_text(json.dumps(marker,sort_keys=True)+"\n",encoding="utf-8")
+        destination=work/"rootfs"
+        if destination.exists():
+            if destination.is_symlink() or not (destination/".kerynth-rootfs.json").is_file():
+                fail("refusing to replace an unmarked rootfs directory: "+str(destination))
+            shutil.rmtree(destination)
+        os.replace(root,destination)
+        print("Rootfs created at "+str(destination))
+        print("Root login is locked; --developer-shell is for isolated development VMs only" if not developer_shell else "WARNING: direct root shell enabled; never publish this image")
+    finally:
+        shutil.rmtree(temporary,ignore_errors=True)
+
+def build_kernel(work,jobs=4):
+    require_tools(("make","gcc","bc","bison","flex","openssl","perl"))
+    source=fetch_extract("linux",work)
+    rootfs=work/"rootfs"
+    if not (rootfs/".kerynth-rootfs.json").is_file():
+        fail("build the rootfs before building the kernel")
+    build_dir=work/"build/linux-6.6.161"
+    if build_dir.exists():
+        if build_dir.is_symlink() or not (build_dir/".kerynth-build-marker").is_file():
+            fail("refusing to replace an unmarked kernel build directory")
+        shutil.rmtree(build_dir)
+    build_dir.mkdir(parents=True)
+    (build_dir/".kerynth-build-marker").write_text("Kerynth isolated kernel build\n",encoding="utf-8")
+    fragment=PROJECT_ROOT/"kernel/kerynth-x86_64.fragment"
+    run(["make","O="+str(build_dir),"x86_64_defconfig"],cwd=source,env=environment())
+    run([source/"scripts/kconfig/merge_config.sh","-m","-O",build_dir,build_dir/".config",fragment],cwd=source,env=environment())
+    run(["make","O="+str(build_dir),"olddefconfig"],cwd=source,env=environment())
+    config=(build_dir/".config").read_text(encoding="utf-8").splitlines()
+    missing=[item for item in KERNEL_REQUIRED if item not in config]
+    if missing:
+        fail("kernel config is missing required options: "+", ".join(missing))
+    run(["make","O="+str(build_dir),"-j{}".format(jobs),"bzImage","modules"],cwd=source,env=environment())
+    run(["make","O="+str(build_dir),"INSTALL_MOD_PATH="+str(rootfs),"modules_install"],cwd=source,env=environment())
+    release=run(["make","O="+str(build_dir),"kernelrelease"],cwd=source,env=environment(),capture=True).stdout.decode("utf-8","replace").strip()
+    image=build_dir/"arch/x86/boot/bzImage"
+    if not image.is_file() or image.stat().st_size<1024*1024:
+        fail("kernel build did not produce a valid-sized bzImage")
+    artifacts=work/"kernel"
+    artifacts.mkdir(exist_ok=True)
+    shutil.copy2(image,artifacts/"vmlinuz")
+    shutil.copy2(build_dir/"System.map",artifacts/"System.map")
+    shutil.copy2(build_dir/".config",artifacts/"config")
+    (artifacts/"release").write_text(release+"\n",encoding="utf-8")
+    print("Kernel built: "+release)
+
+def build_initramfs(work):
+    rootfs=work/"rootfs"
+    if not (rootfs/".kerynth-rootfs.json").is_file():
+        fail("build the rootfs first")
+    temporary=Path(tempfile.mkdtemp(prefix=".kerynth-initramfs-",dir=work))
+    try:
+        stage=temporary/"root"
+        (stage/"bin").mkdir(parents=True)
+        (stage/"lib").mkdir()
+        shutil.copy2(rootfs/"bin/busybox",stage/"bin/busybox")
+        shutil.copy2(PROJECT_ROOT/"initramfs/init",stage/"init")
+        shutil.copy2(PROJECT_ROOT/"initramfs/kerynth-boot-mode",stage/"lib/kerynth-boot-mode")
+        os.chmod(stage/"init",0o755)
+        os.chmod(stage/"lib/kerynth-boot-mode",0o755)
+        run([sys.executable,PROJECT_ROOT/"tools/kerynth-initramfs","--root",stage,"--output",work/"initramfs.cpio.gz"])
+    finally:
+        shutil.rmtree(temporary,ignore_errors=True)
+
+def stage_iso(work):
+    require_tools(("mksquashfs",))
+    for path in (work/"kernel/vmlinuz",work/"rootfs/.kerynth-rootfs.json",work/"initramfs.cpio.gz"):
+        if not path.is_file():
+            fail("missing required build artifact: "+str(path))
+    root=work/"iso-root"
+    if root.is_symlink():
+        fail("ISO staging root must not be a symlink")
+    (root/"boot/grub").mkdir(parents=True,exist_ok=True)
+    (root/"live").mkdir(parents=True,exist_ok=True)
+    shutil.copy2(work/"kernel/vmlinuz",root/"boot/vmlinuz")
+    shutil.copy2(work/"initramfs.cpio.gz",root/"boot/initramfs.cpio.gz")
+    shutil.copy2(PROJECT_ROOT/"boot/grub/grub.cfg",root/"boot/grub/grub.cfg")
+    squashfs=root/"live/rootfs.squashfs"
+    if squashfs.exists() or squashfs.is_symlink():
+        if squashfs.is_symlink() or not squashfs.is_file():
+            fail("SquashFS output is not a regular file")
+        squashfs.unlink()
+    run(["mksquashfs",work/"rootfs",squashfs,"-noappend","-comp","xz","-all-root","-no-progress"])
+    print("ISO staging tree created: "+str(root))
+
+def full_build(args):
+    work=workspace()
+    build_rootfs(work,args.developer_shell,args.jobs)
+    build_kernel(work,args.jobs)
+    build_initramfs(work)
+    stage_iso(work)
+    run([sys.executable,PROJECT_ROOT/"tools/kerynth-iso","build"])
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(prog="kerynth-build-pipeline")
+    commands=parser.add_subparsers(dest="command",required=True)
+    for name in ("rootfs","kernel","initramfs","iso-stage","build"):
+        item=commands.add_parser(name)
+        if name in ("rootfs","build"):
+            item.add_argument("--developer-shell",action="store_true")
+        if name in ("rootfs","kernel","build"):
+            item.add_argument("--jobs",type=int,default=min(4,os.cpu_count() or 2))
+    args=parser.parse_args(argv)
+    try:
+        if getattr(args,"jobs",1)<1 or getattr(args,"jobs",1)>64:
+            fail("--jobs must be between 1 and 64")
+        work=workspace()
+        if args.command=="rootfs":
+            build_rootfs(work,args.developer_shell,args.jobs)
+        elif args.command=="kernel":
+            build_kernel(work,args.jobs)
+        elif args.command=="initramfs":
+            build_initramfs(work)
+        elif args.command=="iso-stage":
+            stage_iso(work)
+        elif args.command=="build":
+            full_build(args)
+        return 0
+    except (BUILD.BuildError,PipelineError,OSError,tarfile.TarError) as exc:
+        print("kerynth-build-pipeline: error: "+str(exc),file=sys.stderr)
+        return 1
+
+if __name__=="__main__":
+    raise SystemExit(main())

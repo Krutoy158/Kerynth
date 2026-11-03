@@ -1,4 +1,23 @@
 {
   "version": 1,
-  "sources": []
-}
+  "sources": [
+    {
+      "name": "linux",
+      "url": "https://www.kernel.org/pub/linux/kernel/v6.x/linux-6.6.161.tar.xz",
+      "filename": "linux-6.6.161.tar.xz",
+      "sha256": "7d34405be5cd4989b2a5e9cbefa798e3a175218901271e034af3fe4e840b71c6"
+    },
+    {
+      "name": "musl",
+      "url": "https://musl.libc.org/releases/musl-1.2.6.tar.gz",
+      "filename": "musl-1.2.6.tar.gz",
+      "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+    },
+    {
+      "name": "busybox",
+      "url": "https://busybox.net/downloads/busybox-1.38.0.tar.bz2",
+      "filename": "busybox-1.38.0.tar.bz2",
+      "sha256": "34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2"
+    }
+  ]
+}\n

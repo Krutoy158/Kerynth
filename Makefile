@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: check test fetch initramfs hardware iso-check iso
+.PHONY: check test fetch rootfs kernel initramfs iso-stage hardware iso-check iso build
 
 check:
 	$(PYTHON) tools/kerynth-build check
@@ -22,3 +22,4 @@ iso-check:
 
 iso:
 	$(PYTHON) tools/kerynth-iso build
+\nbuild:\n\t$(PYTHON) tools/kerynth-build-pipeline build\n
