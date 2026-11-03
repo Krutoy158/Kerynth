@@ -4,7 +4,7 @@
 
 ## Support approach
 
-AETHER OS will use upstream Linux kernel drivers and separately managed firmware packages. Hardware support is determined by the exact device ID, kernel version/configuration, firmware availability, and licensing terms.
+Kerynth OS will use upstream Linux kernel drivers and separately managed firmware packages. Hardware support is determined by the exact device ID, kernel version/configuration, firmware availability, and licensing terms.
 
 The project will not claim universal hardware compatibility.
 
@@ -32,7 +32,7 @@ The project will not claim universal hardware compatibility.
 
 ## Diagnostic states
 
-The future `aether-hw` tool should distinguish:
+The future `kerynth-hw` tool should distinguish:
 
 - device detected and driver loaded
 - device detected and driver available but not loaded
