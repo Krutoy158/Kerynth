@@ -170,7 +170,7 @@ private:
         page->setHtml(html);
         if (!actions.isEmpty()) {
             auto *button = new QPushButton(actionLabel);
-            page->setCornerWidget(button, Qt::TopRightCorner);
+            page->setCornerWidget(button);
             connect(button, &QPushButton::clicked, this, [this, actions, section]() {
                 if (section == "help") {
                     if (!QProcess::startDetached("xdg-open", {"https://github.com/Krutoy158/Kerynth"}))
@@ -183,7 +183,7 @@ private:
                 }
             });
         } else {
-            page->setCornerWidget(nullptr, Qt::TopRightCorner);
+            page->setCornerWidget(nullptr);
         }
     }
 };
