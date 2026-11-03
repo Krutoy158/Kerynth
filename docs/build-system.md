@@ -13,15 +13,15 @@ It does not compile the kernel or install anything on the host yet.
 
 ## Configuration
 
-The build configuration is stored in `aether.toml`:
+The build configuration is stored in `kerynth.toml`:
 
 ```toml
 [build]
 architecture = "x86_64"
-workspace = ".aether-work"
+workspace = ".kerynth-work"
 ```
 
-The workspace must remain inside the project directory. Downloaded archives are stored under `.aether-work/sources/`.
+The workspace must remain inside the project directory. Downloaded archives are stored under `.kerynth-work/sources/`.
 
 ## Source lock file
 
@@ -48,19 +48,19 @@ The example digest is deliberately not a valid lock entry. Do not add a source u
 Validate configuration and source metadata:
 
 ```sh
-python3 tools/aether-build check
+python3 tools/kerynth-build check
 ```
 
 Fetch all locked sources:
 
 ```sh
-python3 tools/aether-build fetch
+python3 tools/kerynth-build fetch
 ```
 
 Fetch one named source:
 
 ```sh
-python3 tools/aether-build fetch linux
+python3 tools/kerynth-build fetch linux
 ```
 
 A cached archive is hashed again before it is reused. A mismatch causes the cached file to be discarded and downloaded again. Downloads are written to a temporary file and moved into place only after the digest matches.
