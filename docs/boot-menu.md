@@ -35,4 +35,17 @@ Boots the Kerynth live environment without starting the installer. Internal disk
 
 ## Implementation status
 
-This document records the approved menu design. It is not a claim that the boot menu, installer, or Live environment has been implemented. The menu becomes release-ready only after the ISO build and QEMU safety tests pass.
+## GRUB prototype
+
+`boot/grub/grub.cfg` contains the first text-mode GRUB menu prototype. It prints the KER lettering, exposes the three approved choices, and passes a distinct `kerynth.mode` kernel argument for each choice. The timeout is disabled so the firmware/bootloader cannot silently select an installation.
+
+The prototype currently assumes these future ISO paths:
+
+- `/boot/vmlinuz`
+- `/boot/initramfs.cpio.gz`
+
+Those artifacts and the installer/Live init behavior do not exist yet. The GRUB configuration is not wired into an ISO build, and its appearance has not yet been verified in GRUB or QEMU.
+
+## Implementation status
+
+The menu specification, GRUB configuration prototype, and static regression tests exist. This is not a claim that the boot menu is integrated into a bootable ISO or that the installer or Live environment has been implemented. Release readiness requires GRUB validation, ISO integration, and QEMU safety tests.
