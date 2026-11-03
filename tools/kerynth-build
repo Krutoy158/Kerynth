@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+import tomllib
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlparse
+
+
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+CHUNK_SIZE = 1024 * 1024
+
+
+class BuildError(Exception):
+    pass
+
+
+def load_config(config_path):
+    config_path = Path(config_path).resolve()
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise BuildError(f"cannot read configuration: {exc}") from exc
+
+    build = data.get("build")
+    if not isinstance(build, dict):
+        raise BuildError("missing [build] section")
+
+    architecture = build.get("architecture")
+    if architecture != "x86_64":
+        raise BuildError("only x86_64 is supported by the current build tool")
+
+    workspace_value = build.get("workspace")
+    if not isinstance(workspace_value, str) or not workspace_value:
+        raise BuildError("build.workspace must be a non-empty relative path")
+
+    workspace_path = Path(workspace_value)
+    if workspace_path.is_absolute() or ".." in workspace_path.parts:
+        raise BuildError("build.workspace must stay inside the project directory")
+
+    project_root = config_path.parent
+    workspace = (project_root / workspace_path).resolve()
+    if not workspace.is_relative_to(project_root):
+        raise BuildError("workspace resolves outside the project directory")
+
+    return {
+        "project_root": project_root,
+        "architecture": architecture,
+        "workspace": workspace,
+    }
+
+
+def load_lock(lock_path):
+    try:
+        data = json.loads(Path(lock_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildError(f"cannot read source lock: {exc}") from exc
+
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise BuildError("unsupported source lock version")
+
+    sources = data.get("sources")
+    if not isinstance(sources, list):
+        raise BuildError("sources.lock must contain a sources array")
+
+    names = set()
+    filenames = set()
+    for source in sources:
+        validate_source(source)
+        if source["name"] in names:
+            raise BuildError(f"duplicate source name: {source['name']}")
+        if source["filename"] in filenames:
+            raise BuildError(f"duplicate source filename: {source['filename']}")
+        names.add(source["name"])
+        filenames.add(source["filename"])
+
+    return sources
+
+
+def validate_source(source):
+    if not isinstance(source, dict):
+        raise BuildError("each source entry must be an object")
+
+    name = source.get("name")
+    url = source.get("url")
+    digest = source.get("sha256")
+    filename = source.get("filename")
+
+    if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
+        raise BuildError("source name is missing or invalid")
+
+    if not isinstance(url, str) or urlparse(url).scheme != "https" or not urlparse(url).netloc:
+        raise BuildError(f"{name}: source URL must use HTTPS")
+
+    if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
+        raise BuildError(f"{name}: sha256 must contain 64 lowercase hexadecimal characters")
+
+    if not isinstance(filename, str) or filename in {"", ".", ".."}:
+        raise BuildError(f"{name}: filename is missing or invalid")
+
+    if Path(filename).name != filename or "/" in filename or "\\" in filename:
+        raise BuildError(f"{name}: filename must not contain a path")
+
+    return source
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def ensure_inside(root, path):
+    root = Path(root).resolve()
+    path = Path(path).resolve()
+    if not path.is_relative_to(root):
+        raise BuildError(f"path escapes workspace: {path}")
+    return path
+
+
+def fetch_source(source, workspace):
+    validate_source(source)
+    workspace = Path(workspace).resolve()
+    cache = ensure_inside(workspace, workspace / "sources")
+    cache.mkdir(parents=True, exist_ok=True)
+
+    raw_target = cache / source["filename"]
+    if raw_target.is_symlink():
+        raise BuildError(f"cache target must not be a symbolic link: {raw_target}")
+    target = ensure_inside(cache, raw_target)
+    if target.exists():
+        if target.is_file() and sha256_file(target) == source["sha256"]:
+            return target, False
+        if target.is_dir():
+            raise BuildError(f"cache target is a directory: {target}")
+        target.unlink()
+
+    temporary_path = None
+    try:
+        request = urllib.request.Request(
+            source["url"],
+            headers={"User-Agent": "KERYNTH-OS-build/0.1"},
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            final_scheme = urlparse(response.geturl()).scheme
+            if final_scheme != "https":
+                raise BuildError("source redirected to a non-HTTPS URL")
+
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=cache,
+                prefix=".download-",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                digest = hashlib.sha256()
+                while True:
+                    chunk = response.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    temporary.write(chunk)
+                    digest.update(chunk)
+
+        if digest.hexdigest() != source["sha256"]:
+            raise BuildError(f"{source['name']}: SHA-256 mismatch")
+
+        os.replace(temporary_path, target)
+        temporary_path = None
+        return target, True
+    except BuildError:
+        raise
+    except Exception as exc:
+        raise BuildError(f"{source['name']}: download failed: {exc}") from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def run_check(config_path, lock_path):
+    config = load_config(config_path)
+    sources = load_lock(lock_path)
+    print(f"Configuration: valid ({config['architecture']})")
+    print(f"Workspace: {config['workspace']}")
+    print(f"Locked sources: {len(sources)}")
+    return 0
+
+
+def run_fetch(config_path, lock_path, selected_name):
+    config = load_config(config_path)
+    sources = load_lock(lock_path)
+
+    if selected_name is not None:
+        sources = [source for source in sources if source["name"] == selected_name]
+        if not sources:
+            raise BuildError(f"source not found: {selected_name}")
+
+    if not sources:
+        print("No sources are locked. Add reviewed entries to sources.lock.")
+        return 0
+
+    for source in sources:
+        path, downloaded = fetch_source(source, config["workspace"])
+        state = "downloaded" if downloaded else "verified cache"
+        print(f"{source['name']}: {state} -> {path}")
+
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-build")
+    parser.add_argument("--config", default="kerynth.toml")
+    parser.add_argument("--lock", default="sources.lock")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("check")
+    fetch_parser = subparsers.add_parser("fetch")
+    fetch_parser.add_argument("name", nargs="?")
+
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "check":
+            return run_check(args.config, args.lock)
+        if args.command == "fetch":
+            return run_fetch(args.config, args.lock, args.name)
+    except BuildError as exc:
+        print(f"kerynth-build: error: {exc}", file=sys.stderr)
+        return 1
+
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
