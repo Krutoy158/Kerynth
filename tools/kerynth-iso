@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+
+import argparse
+import gzip
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = PROJECT_ROOT / ".kerynth-work"
+MAX_INITRAMFS_SIZE = 512 * 1024 * 1024
+EXPECTED_ENTRIES = (
+    ("Manual Installation", "kerynth-manual", "kerynth.mode=installer-manual"),
+    ("Automatic Installation", "kerynth-automatic", "kerynth.mode=installer-automatic"),
+    ("Live System", "kerynth-live", "kerynth.mode=live"),
+)
+REQUIRED_FILES = (
+    "boot/grub/grub.cfg",
+    "boot/vmlinuz",
+    "boot/initramfs.cpio.gz",
+    "live/rootfs.squashfs",
+)
+
+
+class IsoError(Exception):
+    pass
+
+
+def fail(message):
+    raise IsoError(message)
+
+
+def align4(value):
+    return (value + 3) & ~3
+
+
+def parse_newc(archive):
+    entries = {}
+    offset = 0
+    while offset < len(archive):
+        if offset + 110 > len(archive):
+            fail("initramfs contains a truncated CPIO header")
+        magic = archive[offset:offset + 6]
+        if magic not in (b"070701", b"070702"):
+            fail("initramfs is not a valid newc CPIO archive")
+        try:
+            fields = [
+                int(archive[offset + 6 + index * 8:offset + 14 + index * 8], 16)
+                for index in range(13)
+            ]
+        except ValueError as exc:
+            raise IsoError("initramfs contains invalid CPIO fields") from exc
+
+        mode = fields[1]
+        file_size = fields[6]
+        name_size = fields[11]
+        if name_size < 1 or name_size > 4096:
+            fail("initramfs contains an invalid CPIO filename length")
+
+        name_start = offset + 110
+        name_end = name_start + name_size
+        if name_end > len(archive) or archive[name_end - 1:name_end] != b"\0":
+            fail("initramfs contains a truncated CPIO filename")
+        try:
+            name = archive[name_start:name_end - 1].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise IsoError("initramfs contains a non-UTF-8 filename") from exc
+
+        data_start = align4(name_end)
+        data_end = data_start + file_size
+        if data_end > len(archive):
+            fail("initramfs contains truncated CPIO file data")
+
+        if name == "TRAILER!!!":
+            return entries
+
+        parts = name.split("/")
+        if (
+            not name
+            or name.startswith("/")
+            or any(part in ("", ".", "..") for part in parts)
+        ):
+            fail("initramfs contains an unsafe path")
+        if name in entries:
+            fail(f"initramfs contains a duplicate path: {name}")
+
+        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            fail(f"initramfs contains an unsupported entry type: {name}")
+        entries[name] = mode
+        offset = align4(data_end)
+
+    fail("initramfs CPIO trailer is missing")
+
+
+def validate_initramfs(path):
+    try:
+        with gzip.open(path, "rb") as stream:
+            archive = stream.read(MAX_INITRAMFS_SIZE + 1)
+    except (OSError, EOFError) as exc:
+        raise IsoError(f"cannot read initramfs gzip archive: {exc}") from exc
+
+    if len(archive) > MAX_INITRAMFS_SIZE:
+        fail("decompressed initramfs exceeds the 512 MiB safety limit")
+
+    entries = parse_newc(archive)
+    required = ("init", "bin/busybox", "lib/kerynth-boot-mode")
+    for name in required:
+        mode = entries.get(name)
+        if mode is None or not stat.S_ISREG(mode) or not mode & 0o111:
+            fail(f"initramfs is missing an executable regular file: /{name}")
+
+
+def validate_grub_config(path):
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise IsoError(f"cannot read GRUB configuration: {exc}") from exc
+
+    matches = re.findall(
+        r'^menuentry\s+"([^"]+)"\s+--id\s+([a-z0-9-]+)\s*\{',
+        content,
+        flags=re.MULTILINE,
+    )
+    if tuple(matches) != tuple((name, entry_id) for name, entry_id, _ in EXPECTED_ENTRIES):
+        fail("GRUB must contain exactly the three approved KER menu entries in order")
+    if not re.search(r"(?m)^set timeout=-1$", content):
+        fail("GRUB menu must wait for explicit user input")
+    if not re.search(r"(?m)^set default=0$", content):
+        fail("GRUB default selection must be the first menu entry")
+
+    for _, entry_id, mode in EXPECTED_ENTRIES:
+        match = re.search(
+            rf'menuentry\s+"[^"]+"\s+--id\s+{re.escape(entry_id)}\s*\{{(.*?)^\}}',
+            content,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        if match is None or mode not in match.group(1):
+            fail(f"GRUB entry does not pass its required boot mode: {entry_id}")
+        if "linux /boot/vmlinuz" not in match.group(1):
+            fail(f"GRUB entry does not load /boot/vmlinuz: {entry_id}")
+        if "initrd /boot/initramfs.cpio.gz" not in match.group(1):
+            fail(f"GRUB entry does not load the initramfs: {entry_id}")
+
+
+def reject_unsafe_tree(root):
+    for current, directories, filenames in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        for name in directories + filenames:
+            path = current_path / name
+            mode = path.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                fail(f"ISO staging tree must not contain symbolic links: {path.relative_to(root)}")
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                fail(f"ISO staging tree contains an unsupported entry: {path.relative_to(root)}")
+
+
+def validate_iso_root(root):
+    root = Path(root)
+    if root.is_symlink():
+        fail("ISO staging root must not be a symbolic link")
+    try:
+        root = root.resolve(strict=True)
+    except OSError as exc:
+        raise IsoError(f"ISO staging root does not exist: {exc}") from exc
+    if not root.is_dir():
+        fail("ISO staging root must be a directory")
+
+    reject_unsafe_tree(root)
+
+    files = {}
+    for relative in REQUIRED_FILES:
+        path = root / relative
+        try:
+            mode = path.lstat().st_mode
+        except OSError as exc:
+            raise IsoError(f"required ISO file is missing: /{relative}") from exc
+        if not stat.S_ISREG(mode) or path.stat().st_size == 0:
+            fail(f"required ISO file must be a non-empty regular file: /{relative}")
+        files[relative] = path
+
+    validate_grub_config(files["boot/grub/grub.cfg"])
+    validate_initramfs(files["boot/initramfs.cpio.gz"])
+
+    squashfs = files["live/rootfs.squashfs"]
+    if squashfs.stat().st_size < 96:
+        fail("Live SquashFS image is too small to contain a superblock")
+    with squashfs.open("rb") as stream:
+        magic = stream.read(4)
+    if magic not in (b"hsqs", b"sqsh"):
+        fail("Live root image does not have a recognized SquashFS magic")
+
+    return root
+
+
+def ensure_workspace_path(value, label):
+    path = Path(value)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if path.is_symlink():
+        fail(f"{label} must not be a symbolic link")
+    resolved = path.resolve()
+    workspace = WORKSPACE.resolve()
+    project = PROJECT_ROOT.resolve()
+    if not workspace.is_relative_to(project):
+        fail("build workspace resolves outside the project")
+    if not resolved.is_relative_to(workspace):
+        fail(f"{label} must stay inside {workspace}")
+    return resolved
+
+
+def has_iso9660_signature(path):
+    with path.open("rb") as stream:
+        stream.seek(16 * 2048)
+        descriptor = stream.read(7)
+    return len(descriptor) == 7 and descriptor[0] == 1 and descriptor[1:6] == b"CD001" and descriptor[6] == 1
+
+
+def build_iso(root, output):
+    root = validate_iso_root(root)
+    output = ensure_workspace_path(output, "ISO output")
+    if output.is_relative_to(root):
+        fail("ISO output must be outside the staging tree")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    grub_mkrescue = shutil.which("grub-mkrescue")
+    if grub_mkrescue is None:
+        fail("grub-mkrescue is required; install GRUB BIOS/EFI tools and xorriso")
+
+    temporary = output.with_name(output.name + ".tmp")
+    if temporary.exists() or temporary.is_symlink():
+        fail(f"temporary ISO output already exists: {temporary}")
+
+    try:
+        result = subprocess.run(
+            [grub_mkrescue, "-o", str(temporary), str(root)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            fail(f"grub-mkrescue failed: {detail}")
+        if not temporary.is_file() or temporary.is_symlink():
+            fail("grub-mkrescue did not create a regular ISO file")
+        if not has_iso9660_signature(temporary):
+            fail("grub-mkrescue output does not have an ISO9660 primary volume descriptor")
+        os.replace(temporary, output)
+    finally:
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+
+    return output
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-iso")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    check_parser = subparsers.add_parser("check")
+    check_parser.add_argument("--root", default=".kerynth-work/iso-root")
+
+    build_parser = subparsers.add_parser("build")
+    build_parser.add_argument("--root", default=".kerynth-work/iso-root")
+    build_parser.add_argument("--output", default=".kerynth-work/kerynth-x86_64.iso")
+
+    args = parser.parse_args(argv)
+
+    try:
+        root = ensure_workspace_path(args.root, "ISO staging root")
+        if args.command == "check":
+            validate_iso_root(root)
+            print("ISO staging tree: valid")
+            print("Boot menu: 3 approved entries")
+            print("Initramfs: gzip + newc archive with required boot files")
+            print("Live root: SquashFS image present")
+            print("Disk writes: none")
+            return 0
+
+        output = build_iso(root, args.output)
+        print(f"Created ISO: {output}")
+        return 0
+    except (IsoError, OSError) as exc:
+        print(f"kerynth-iso: error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
