@@ -20,7 +20,7 @@ BUILD=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD)
 MAX_MEMBERS=250000
 MAX_EXTRACTED_SIZE=8*1024*1024*1024
-BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","blkid","mdev","reboot","poweroff","su","chown")
+BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","login","blkid","mdev","reboot","poweroff","su","chown","chmod","find","mkdir","cat","sleep","echo","test","printf","hostname","sync")
 KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_BLK_DEV_LOOP=y")
 
 class PipelineError(Exception):
@@ -180,12 +180,18 @@ def require_tools(names):
     if missing:
         fail("missing build dependencies: "+", ".join(missing))
 
-def set_busybox_config(path):
+def set_busybox_config(path,fragment):
     text=path.read_text(encoding="utf-8")
-    required=("STATIC","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","MDEV","REBOOT","POWEROFF","SU","CHOWN")
-    for symbol in required:
+    settings={}
+    for line in fragment.read_text(encoding="utf-8").splitlines():
+        match=re.fullmatch(r"CONFIG_([A-Z0-9_]+)=(.*)",line)
+        if match:
+            settings[match.group(1)]=match.group(2)
+    for symbol in ("STATIC","INSTALL_APPLET_SYMLINKS","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","FEATURE_BLKID_LABEL","MDEV","REBOOT","POWEROFF","SU","CHOWN","CHMOD","FIND","MKDIR","CAT","SLEEP","ECHO","TEST","PRINTF","HOSTNAME","SYNC"):
+        settings[symbol]="y"
+    for symbol,value in settings.items():
         pattern=re.compile(r"^(?:# )?CONFIG_"+re.escape(symbol)+r"(?:=.*| is not set)$",re.MULTILINE)
-        replacement="CONFIG_"+symbol+"=y"
+        replacement="# CONFIG_"+symbol+" is not set" if value=="n" else "CONFIG_"+symbol+"="+value
         if pattern.search(text):
             text=pattern.sub(replacement,text)
         else:
@@ -235,7 +241,7 @@ def build_rootfs(work,developer_shell=False,jobs=4):
         run(["make","-j{}".format(jobs)],cwd=musl,env=environment())
         run(["make","DESTDIR="+str(root),"install"],cwd=musl,env=environment())
         run(["make","defconfig"],cwd=busybox,env=environment())
-        set_busybox_config(busybox/".config")
+        set_busybox_config(busybox/".config",PROJECT_ROOT/"initramfs/busybox.config.fragment")
         run(["make","oldconfig"],cwd=busybox,env=environment(),input_data=b"\n"*2048)
         run(["make","-j{}".format(jobs)],cwd=busybox,env=environment())
         binary=busybox/"busybox"
@@ -267,7 +273,7 @@ def build_rootfs(work,developer_shell=False,jobs=4):
         shutil.rmtree(temporary,ignore_errors=True)
 
 def build_kernel(work,jobs=4):
-    require_tools(("make","gcc","bc","bison","flex","openssl","perl"))
+    require_tools(("make","gcc","bc","bison","flex","openssl","perl","depmod"))
     source=fetch_extract("linux",work)
     rootfs=work/"rootfs"
     if not (rootfs/".kerynth-rootfs.json").is_file():
