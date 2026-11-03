@@ -47,9 +47,13 @@ class KerPackageManagerTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def make_package(self, name, version="1.0", depends=None, conflicts=None):
+        payload_dir = self.work / ("payload-" + name)
+        binary = payload_dir / "usr/share/kerynth-tests" / (name + ".txt")
+        binary.parent.mkdir(parents=True)
+        binary.write_text("package " + name + "\\n", encoding="utf-8")
         output = self.work / (name + ".ker")
         args = Namespace(
-            payload_dir=str(self.payload),
+            payload_dir=str(payload_dir),
             name=name,
             version=version,
             architecture="x86_64",
@@ -69,7 +73,7 @@ class KerPackageManagerTests(unittest.TestCase):
     def test_install_and_remove_signed_package(self):
         package = self.make_package("hello")
         self.install_package(package)
-        installed_file = self.target / "usr/bin/hello"
+        installed_file = self.target / "usr/share/kerynth-tests/hello.txt"
         self.assertEqual(installed_file.read_text(encoding="utf-8"), "hello from Kerynth\n")
         records = KER.read_installed(self.target)
         self.assertEqual(records["hello"]["version"], "1.0")
@@ -81,7 +85,7 @@ class KerPackageManagerTests(unittest.TestCase):
         package = self.make_package("app", depends=["base=1.0"])
         with self.assertRaises(KER.PackageError):
             self.install_package(package)
-        self.assertFalse((self.target / "usr/bin/hello").exists())
+        self.assertFalse((self.target / "usr/share/kerynth-tests/app.txt").exists())
 
     def test_package_dependency_blocks_removal(self):
         base = self.make_package("base")
@@ -95,7 +99,7 @@ class KerPackageManagerTests(unittest.TestCase):
     def test_remove_refuses_modified_package_file(self):
         package = self.make_package("mutable")
         self.install_package(package)
-        installed_file = self.target / "usr/bin/hello"
+        installed_file = self.target / "usr/share/kerynth-tests/mutable.txt"
         installed_file.write_text("changed by user\n", encoding="utf-8")
         with self.assertRaises(KER.PackageError):
             KER.remove(Namespace(name="mutable", root=str(self.target)))
