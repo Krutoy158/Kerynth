@@ -71,7 +71,7 @@ The `.deb` compatibility layer is required alongside `.ker`. It inspects Debian 
 
 ## 7. Hardware and firmware
 
-Hardware support is based on upstream Linux drivers plus separately packaged firmware. KERYNTH tooling will collect hardware identifiers, match them to available kernel modules and firmware packages, and produce actionable diagnostics.
+Hardware support is based on upstream Linux drivers plus separately packaged firmware. The read-only `kerynth-hw` prototype collects PCI/USB identifiers locally. Future installer tooling must match device modaliases against modules built for the exact selected kernel and a reviewed firmware catalog, then offer a recommended or manually reviewed driver set. The ISO must contain baseline storage/network support and a usable offline driver path; downloads are only possible after a working network interface exists.
 
 The system must distinguish:
 - driver available and loaded
@@ -82,7 +82,7 @@ The system must distinguish:
 
 Firmware redistribution must respect each firmware file's license and redistribution terms.
 
-## 8. Installer safety
+## 8. Installer safety\n\nBefore installation, the installer must inventory PCI/USB hardware locally, show detected devices and the proposed kernel-module/firmware bundle, and allow the user to review it. Module packages must match the selected kernel ABI. Firmware must pass license review and package integrity checks. The installer must support offline selection from the ISO or user-provided removable media. Hardware inventory must never be uploaded.
 
 The installer must:
 - show the selected target disk and partitions before writing
