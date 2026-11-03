@@ -16,6 +16,8 @@ from urllib.parse import urlparse
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 CHUNK_SIZE = 1024 * 1024
+MAX_SOURCE_SIZE = 2 * 1024 * 1024 * 1024
+DOWNLOAD_TIMEOUT = 60
 
 
 class BuildError(Exception):
@@ -50,38 +52,7 @@ def load_config(config_path):
     if not workspace.is_relative_to(project_root):
         raise BuildError("workspace resolves outside the project directory")
 
-    return {
-        "project_root": project_root,
-        "architecture": architecture,
-        "workspace": workspace,
-    }
-
-
-def load_lock(lock_path):
-    try:
-        data = json.loads(Path(lock_path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise BuildError(f"cannot read source lock: {exc}") from exc
-
-    if not isinstance(data, dict) or data.get("version") != 1:
-        raise BuildError("unsupported source lock version")
-
-    sources = data.get("sources")
-    if not isinstance(sources, list):
-        raise BuildError("sources.lock must contain a sources array")
-
-    names = set()
-    filenames = set()
-    for source in sources:
-        validate_source(source)
-        if source["name"] in names:
-            raise BuildError(f"duplicate source name: {source['name']}")
-        if source["filename"] in filenames:
-            raise BuildError(f"duplicate source filename: {source['filename']}")
-        names.add(source["name"])
-        filenames.add(source["filename"])
-
-    return sources
+    return {"project_root": project_root, "architecture": architecture, "workspace": workspace}
 
 
 def validate_source(source):
@@ -96,19 +67,53 @@ def validate_source(source):
     if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
         raise BuildError("source name is missing or invalid")
 
-    if not isinstance(url, str) or urlparse(url).scheme != "https" or not urlparse(url).netloc:
+    if not isinstance(url, str):
         raise BuildError(f"{name}: source URL must use HTTPS")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise BuildError(f"{name}: source URL must be HTTPS without embedded credentials")
 
     if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
         raise BuildError(f"{name}: sha256 must contain 64 lowercase hexadecimal characters")
 
     if not isinstance(filename, str) or filename in {"", ".", ".."}:
         raise BuildError(f"{name}: filename is missing or invalid")
-
     if Path(filename).name != filename or "/" in filename or "\\" in filename:
         raise BuildError(f"{name}: filename must not contain a path")
+    if len(filename.encode("utf-8")) > 255 or any(ord(char) < 32 for char in filename):
+        raise BuildError(f"{name}: filename is too long or contains control characters")
 
     return source
+
+
+def load_lock(lock_path):
+    try:
+        data = json.loads(Path(lock_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildError(f"cannot read source lock: {exc}") from exc
+
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise BuildError("unsupported source lock version")
+    if set(data) != {"version", "sources"}:
+        raise BuildError("sources.lock contains unknown or missing top-level fields")
+
+    sources = data["sources"]
+    if not isinstance(sources, list):
+        raise BuildError("sources.lock must contain a sources array")
+
+    names = set()
+    filenames = set()
+    for source in sources:
+        validate_source(source)
+        if set(source) != {"name", "url", "filename", "sha256"}:
+            raise BuildError(f"{source['name']}: source entry contains unknown or missing fields")
+        if source["name"] in names:
+            raise BuildError(f"duplicate source name: {source['name']}")
+        if source["filename"] in filenames:
+            raise BuildError(f"duplicate source filename: {source['filename']}")
+        names.add(source["name"])
+        filenames.add(source["filename"])
+    return sources
 
 
 def sha256_file(path):
@@ -148,25 +153,33 @@ def fetch_source(source, workspace):
     try:
         request = urllib.request.Request(
             source["url"],
-            headers={"User-Agent": "KERYNTH-OS-build/0.1"},
+            headers={"User-Agent": "Kerynth-build/0.2"},
         )
-        with urllib.request.urlopen(request, timeout=60) as response:
-            final_scheme = urlparse(response.geturl()).scheme
-            if final_scheme != "https":
-                raise BuildError("source redirected to a non-HTTPS URL")
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+            final_url = urlparse(response.geturl())
+            if final_url.scheme != "https" or not final_url.hostname:
+                raise BuildError("source redirected to an invalid or non-HTTPS URL")
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    if int(content_length) < 0 or int(content_length) > MAX_SOURCE_SIZE:
+                        raise BuildError("source exceeds the 2 GiB download limit")
+                except ValueError as exc:
+                    raise BuildError("source returned an invalid Content-Length") from exc
 
+            total = 0
+            digest = hashlib.sha256()
             with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=cache,
-                prefix=".download-",
-                delete=False,
+                mode="wb", dir=cache, prefix=".download-", delete=False
             ) as temporary:
                 temporary_path = Path(temporary.name)
-                digest = hashlib.sha256()
                 while True:
                     chunk = response.read(CHUNK_SIZE)
                     if not chunk:
                         break
+                    total += len(chunk)
+                    if total > MAX_SOURCE_SIZE:
+                        raise BuildError("source exceeds the 2 GiB download limit")
                     temporary.write(chunk)
                     digest.update(chunk)
 
@@ -191,6 +204,7 @@ def run_check(config_path, lock_path):
     print(f"Configuration: valid ({config['architecture']})")
     print(f"Workspace: {config['workspace']}")
     print(f"Locked sources: {len(sources)}")
+    print("Telemetry: disabled (no telemetry subsystem)")
     return 0
 
 
@@ -202,7 +216,6 @@ def run_fetch(config_path, lock_path, selected_name):
         sources = [source for source in sources if source["name"] == selected_name]
         if not sources:
             raise BuildError(f"source not found: {selected_name}")
-
     if not sources:
         print("No sources are locked. Add reviewed entries to sources.lock.")
         return 0
@@ -211,7 +224,6 @@ def run_fetch(config_path, lock_path, selected_name):
         path, downloaded = fetch_source(source, config["workspace"])
         state = "downloaded" if downloaded else "verified cache"
         print(f"{source['name']}: {state} -> {path}")
-
     return 0
 
 
@@ -223,7 +235,6 @@ def main(argv=None):
     subparsers.add_parser("check")
     fetch_parser = subparsers.add_parser("fetch")
     fetch_parser.add_argument("name", nargs="?")
-
     args = parser.parse_args(argv)
 
     try:
@@ -234,7 +245,6 @@ def main(argv=None):
     except BuildError as exc:
         print(f"kerynth-build: error: {exc}", file=sys.stderr)
         return 1
-
     return 2
 
 
