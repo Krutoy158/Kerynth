@@ -26,7 +26,9 @@ Boots the Kerynth live environment without starting the installer. Internal disk
 
 ## Visual direction
 
-- Kerynth logo/wordmark centered above the menu.
+- A distinctive Kerynth ASCII/art logo inspired by the visual presentation of Fastfetch: a recognizable custom emblem on the left, with the KERYNTH name and a compact system identity block beside it. It must be original Kerynth artwork, not a copied Fastfetch or another distribution logo.
+- The identity block may show static release/build identity and detected machine details only when available locally; it must not delay boot, require network access, or transmit hardware information.
+- Place the three menu choices clearly below or beside the branding, depending on the boot environment's resolution.
 - Clean, restrained layout with clear spacing and readable typography.
 - Glass styling may be used when the graphical boot environment supports it, but readability and accessibility take priority.
 - No telemetry, network requirement, account prompt, or automatic installation step at the boot menu.
