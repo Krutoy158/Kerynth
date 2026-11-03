@@ -19,11 +19,6 @@ class KerPackageManagerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.work = Path(self.temporary.name)
-        self.payload = self.work / "payload"
-        self.payload.mkdir()
-        (self.payload / "usr/bin").mkdir(parents=True)
-        (self.payload / "usr/bin/hello").write_text("hello from Kerynth\n", encoding="utf-8")
-        (self.payload / "usr/bin/hello").chmod(0o755)
         self.private = Ed25519PrivateKey.generate()
         self.private_path = self.work / "private.pem"
         self.private_path.write_bytes(self.private.private_bytes(
@@ -50,7 +45,7 @@ class KerPackageManagerTests(unittest.TestCase):
         payload_dir = self.work / ("payload-" + name)
         binary = payload_dir / "usr/share/kerynth-tests" / (name + ".txt")
         binary.parent.mkdir(parents=True)
-        binary.write_text("package " + name + "\\n", encoding="utf-8")
+        binary.write_text("package " + name + "\n", encoding="utf-8")
         output = self.work / (name + ".ker")
         args = Namespace(
             payload_dir=str(payload_dir),
@@ -74,7 +69,7 @@ class KerPackageManagerTests(unittest.TestCase):
         package = self.make_package("hello")
         self.install_package(package)
         installed_file = self.target / "usr/share/kerynth-tests/hello.txt"
-        self.assertEqual(installed_file.read_text(encoding="utf-8"), "package hello\\n")
+        self.assertEqual(installed_file.read_text(encoding="utf-8"), "package hello\n")
         records = KER.read_installed(self.target)
         self.assertEqual(records["hello"]["version"], "1.0")
         KER.remove(Namespace(name="hello", root=str(self.target)))
