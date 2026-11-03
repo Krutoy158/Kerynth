@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import io
+import json
+import os
+import re
+import stat
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+DOMAIN=b"KERYNTH-KER-V1\0"
+FIELDS={"format_version","name","version","architecture","description","dependencies","conflicts","payload_sha256","signing_key_id"}
+OUTER=("manifest.json","payload.tar","signature.ed25519")
+NAME=re.compile(r"^[a-z0-9][a-z0-9+_.-]*$")
+VERSION=re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+:~_-]*$")
+HEX=re.compile(r"^[0-9a-f]{64}$")
+
+class PackageError(Exception): pass
+
+def fail(message): raise PackageError(message)
+
+def canonical(value):
+    return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False).encode("utf-8")
+
+def pairs_hook(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result: fail("duplicate manifest key: "+key)
+        result[key]=value
+    return result
+
+def parse_manifest(raw):
+    if raw.startswith(b"\xef\xbb\xbf"): fail("manifest must not contain a UTF-8 BOM")
+    try: value=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs_hook,parse_constant=lambda x:fail("invalid JSON constant: "+x))
+    except (UnicodeDecodeError,json.JSONDecodeError) as exc: raise PackageError("invalid manifest JSON: "+str(exc)) from exc
+    if not isinstance(value,dict): fail("manifest must be a JSON object")
+    if set(value)!=FIELDS: fail("manifest fields mismatch")
+    if canonical(value)!=raw: fail("manifest is not canonical JSON")
+    if type(value["format_version"]) is not int or value["format_version"]!=1: fail("unsupported format_version")
+    if not isinstance(value["name"],str) or not NAME.fullmatch(value["name"]): fail("invalid package name")
+    if not isinstance(value["version"],str) or not VERSION.fullmatch(value["version"]): fail("invalid package version")
+    if value["architecture"] not in ("x86_64","noarch"): fail("unsupported architecture")
+    if not isinstance(value["description"],str) or not value["description"]: fail("description must be non-empty")
+    if not isinstance(value["signing_key_id"],str) or not value["signing_key_id"]: fail("signing_key_id must be non-empty")
+    if not isinstance(value["payload_sha256"],str) or not HEX.fullmatch(value["payload_sha256"]): fail("invalid payload_sha256")
+    for field in ("dependencies","conflicts"):
+        if not isinstance(value[field],list): fail(field+" must be an array")
+        for entry in value[field]:
+            if not isinstance(entry,dict) or set(entry) not in ({"name"},{"name","version"}): fail("invalid "+field+" entry")
+            if not isinstance(entry["name"],str) or not NAME.fullmatch(entry["name"]): fail("invalid "+field+" name")
+            if "version" in entry and not isinstance(entry["version"],str): fail("invalid "+field+" version")
+    return value
+
+def safe_path(name):
+    if not isinstance(name,str) or not name or "\\" in name: fail("invalid archive path: "+repr(name))
+    path=PurePosixPath(name)
+    if path.is_absolute() or any(part in ("",".","..") for part in name.split("/")) or str(path)!=name: fail("unsafe archive path: "+name)
+    return name
+
+def open_tar(data,label):
+    try:
+        archive=tarfile.open(fileobj=io.BytesIO(data),mode="r:")
+        return archive,archive.getmembers()
+    except (tarfile.TarError,OSError) as exc: raise PackageError("invalid "+label+" archive: "+str(exc)) from exc
+
+def validate_payload(payload):
+    archive,members=open_tar(payload,"payload")
+    try:
+        seen=set()
+        for member in members:
+            name=safe_path(member.name)
+            if name in seen: fail("duplicate payload path: "+name)
+            seen.add(name)
+            if member.type not in (tarfile.REGTYPE,tarfile.AREGTYPE,tarfile.DIRTYPE): fail("unsupported payload entry type: "+name)
+            if member.pax_headers: fail("PAX metadata is not supported: "+name)
+            if member.mode & (stat.S_ISUID|stat.S_ISGID) or member.mode & ~0o777: fail("unsafe permissions: "+name)
+            if member.uid!=0 or member.gid!=0: fail("payload ownership must be normalized: "+name)
+            if member.type==tarfile.DIRTYPE and member.size!=0: fail("directory has data: "+name)
+    finally: archive.close()
+    return len(members)
+
+def make_payload(source):
+    root=Path(source).resolve(strict=True)
+    if not root.is_dir(): fail("payload source must be a directory")
+    output=io.BytesIO()
+    with tarfile.open(fileobj=output,mode="w",format=tarfile.USTAR_FORMAT) as archive:
+        for path in sorted(root.rglob("*"),key=lambda p:p.relative_to(root).as_posix()):
+            name=safe_path(path.relative_to(root).as_posix())
+            info=path.lstat()
+            if stat.S_ISLNK(info.st_mode): fail("symbolic links are not allowed: "+name)
+            if stat.S_ISDIR(info.st_mode):
+                member=tarfile.TarInfo(name); member.type=tarfile.DIRTYPE; member.mode=stat.S_IMODE(info.st_mode)&0o777
+                member.uid=member.gid=member.mtime=0; archive.addfile(member)
+            elif stat.S_ISREG(info.st_mode):
+                if info.st_mode&(stat.S_ISUID|stat.S_ISGID): fail("setuid/setgid mode is not allowed: "+name)
+                member=tarfile.TarInfo(name); member.size=info.st_size; member.mode=stat.S_IMODE(info.st_mode)&0o777
+                member.uid=member.gid=member.mtime=0
+                with path.open("rb") as stream: archive.addfile(member,stream)
+            else: fail("unsupported filesystem entry: "+name)
+    payload=output.getvalue(); validate_payload(payload); return payload
+
+def private_key(path):
+    try: key=serialization.load_pem_private_key(Path(path).read_bytes(),password=None)
+    except (OSError,ValueError,TypeError) as exc: raise PackageError("cannot load private key: "+str(exc)) from exc
+    if not isinstance(key,Ed25519PrivateKey): fail("private key must be Ed25519")
+    return key
+
+def build(args):
+    payload=make_payload(args.payload_dir); digest=hashlib.sha256(payload).digest()
+    manifest={"format_version":1,"name":args.name,"version":args.version,"architecture":args.architecture,"description":args.description,"dependencies":[],"conflicts":[],"payload_sha256":digest.hex(),"signing_key_id":args.key_id}
+    raw=canonical(manifest); parse_manifest(raw)
+    signature=private_key(args.private_key).sign(DOMAIN+raw+digest)
+    output=Path(args.output); output.parent.mkdir(parents=True,exist_ok=True); temporary=output.with_name(output.name+".tmp")
+    try:
+        with tarfile.open(temporary,mode="w",format=tarfile.USTAR_FORMAT) as archive:
+            for name,data in zip(OUTER,(raw,payload,signature)):
+                info=tarfile.TarInfo(name); info.size=len(data); info.mode=0o644; info.uid=info.gid=info.mtime=0
+                archive.addfile(info,io.BytesIO(data))
+        os.replace(temporary,output)
+    finally: temporary.unlink(missing_ok=True)
+    print("Created "+str(output))
+
+def keyring(path):
+    try: data=json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError,json.JSONDecodeError) as exc: raise PackageError("cannot read keyring: "+str(exc)) from exc
+    if not isinstance(data,dict): fail("keyring must be a JSON object")
+    result={}
+    for key_id,encoded in data.items():
+        if not isinstance(key_id,str) or not isinstance(encoded,str): fail("invalid keyring entry")
+        try:
+            raw=bytes.fromhex(encoded)
+            if len(raw)!=32: fail("invalid Ed25519 public key length: "+key_id)
+            result[key_id]=Ed25519PublicKey.from_public_bytes(raw)
+        except ValueError as exc: raise PackageError("invalid public key: "+key_id) from exc
+    return result
+
+def verify(args):
+    try: outer,members=open_tar(Path(args.package).read_bytes(),"package")
+    except OSError as exc: raise PackageError("cannot read package: "+str(exc)) from exc
+    try:
+        if [m.name for m in members]!=list(OUTER): fail("outer archive must contain exactly three required members in order")
+        data={}
+        for member in members:
+            if member.type not in (tarfile.REGTYPE,tarfile.AREGTYPE) or member.pax_headers: fail("outer members must be plain regular files")
+            stream=outer.extractfile(member)
+            if stream is None: fail("cannot read outer member: "+member.name)
+            data[member.name]=stream.read()
+    finally: outer.close()
+    raw=data["manifest.json"]; manifest=parse_manifest(raw); payload=data["payload.tar"]; digest=hashlib.sha256(payload).digest()
+    if digest.hex()!=manifest["payload_sha256"]: fail("payload SHA-256 mismatch")
+    public=keyring(args.keyring).get(manifest["signing_key_id"])
+    if public is None: fail("untrusted signing key: "+manifest["signing_key_id"])
+    signature=data["signature.ed25519"]
+    if len(signature)!=64: fail("Ed25519 signature must be exactly 64 bytes")
+    try: public.verify(signature,DOMAIN+raw+digest)
+    except InvalidSignature as exc: raise PackageError("Ed25519 signature verification failed") from exc
+    count=validate_payload(payload)
+    print("Verified {} {} ({})".format(manifest["name"],manifest["version"],manifest["architecture"]))
+    print("Payload entries: "+str(count))
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(prog="ker-package"); commands=parser.add_subparsers(dest="command",required=True)
+    b=commands.add_parser("build"); b.add_argument("--payload-dir",required=True); b.add_argument("--name",required=True); b.add_argument("--version",required=True); b.add_argument("--architecture",choices=("x86_64","noarch"),default="x86_64"); b.add_argument("--description",required=True); b.add_argument("--key-id",required=True); b.add_argument("--private-key",required=True); b.add_argument("--output",required=True); b.set_defaults(handler=build)
+    v=commands.add_parser("verify"); v.add_argument("package"); v.add_argument("--keyring",required=True); v.set_defaults(handler=verify)
+    args=parser.parse_args(argv)
+    try: args.handler(args); return 0
+    except PackageError as exc: print("ker-package: error: "+str(exc),file=sys.stderr); return 1
+
+if __name__=="__main__": raise SystemExit(main())
