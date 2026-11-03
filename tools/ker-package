@@ -139,34 +139,291 @@ def keyring(path):
         except ValueError as exc: raise PackageError("invalid public key: "+key_id) from exc
     return result
 
-def verify(args):
-    try: outer,members=open_tar(Path(args.package).read_bytes(),"package")
-    except OSError as exc: raise PackageError("cannot read package: "+str(exc)) from exc
+def read_verified_package(package_path, keyring_path):
     try:
-        if [m.name for m in members]!=list(OUTER): fail("outer archive must contain exactly three required members in order")
-        data={}
+        outer, members = open_tar(Path(package_path).read_bytes(), "package")
+    except OSError as exc:
+        raise PackageError("cannot read package: " + str(exc)) from exc
+    try:
+        if [member.name for member in members] != list(OUTER):
+            fail("outer archive must contain exactly three required members in order")
+        data = {}
         for member in members:
-            if member.type not in (tarfile.REGTYPE,tarfile.AREGTYPE) or member.pax_headers: fail("outer members must be plain regular files")
-            stream=outer.extractfile(member)
-            if stream is None: fail("cannot read outer member: "+member.name)
-            data[member.name]=stream.read()
-    finally: outer.close()
-    raw=data["manifest.json"]; manifest=parse_manifest(raw); payload=data["payload.tar"]; digest=hashlib.sha256(payload).digest()
-    if digest.hex()!=manifest["payload_sha256"]: fail("payload SHA-256 mismatch")
-    public=keyring(args.keyring).get(manifest["signing_key_id"])
-    if public is None: fail("untrusted signing key: "+manifest["signing_key_id"])
-    signature=data["signature.ed25519"]
-    if len(signature)!=64: fail("Ed25519 signature must be exactly 64 bytes")
-    try: public.verify(signature,DOMAIN+raw+digest)
-    except InvalidSignature as exc: raise PackageError("Ed25519 signature verification failed") from exc
-    count=validate_payload(payload)
-    print("Verified {} {} ({})".format(manifest["name"],manifest["version"],manifest["architecture"]))
-    print("Payload entries: "+str(count))
+            if member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or member.pax_headers:
+                fail("outer members must be plain regular files")
+            if member.uid != 0 or member.gid != 0 or member.mode != 0o644:
+                fail("outer package metadata is not normalized")
+            stream = outer.extractfile(member)
+            if stream is None:
+                fail("cannot read outer member: " + member.name)
+            data[member.name] = stream.read()
+    finally:
+        outer.close()
+    raw = data["manifest.json"]
+    manifest = parse_manifest(raw)
+    payload = data["payload.tar"]
+    digest = hashlib.sha256(payload).digest()
+    if digest.hex() != manifest["payload_sha256"]:
+        fail("payload SHA-256 mismatch")
+    public = keyring(keyring_path).get(manifest["signing_key_id"])
+    if public is None:
+        fail("untrusted signing key: " + manifest["signing_key_id"])
+    signature = data["signature.ed25519"]
+    if len(signature) != 64:
+        fail("Ed25519 signature must be exactly 64 bytes")
+    try:
+        public.verify(signature, DOMAIN + raw + digest)
+    except InvalidSignature as exc:
+        raise PackageError("Ed25519 signature verification failed") from exc
+    validate_payload(payload)
+    return manifest, payload
+
+def verify(args):
+    manifest, payload = read_verified_package(args.package, args.keyring)
+    archive, members = open_tar(payload, "payload")
+    archive.close()
+    print("Verified {} {} ({})".format(manifest["name"], manifest["version"], manifest["architecture"]))
+    print("Payload entries: " + str(len(members)))
+
+def target_root(value):
+    raw = Path(value)
+    if raw.is_symlink():
+        fail("target root must not be a symbolic link")
+    root = raw.resolve()
+    project = Path(__file__).resolve().parents[1]
+    allowed = (project / ".kerynth-work" / "targets").resolve()
+    if not root.is_relative_to(allowed) or root == allowed:
+        fail("package operations are restricted to a disposable root below .kerynth-work/targets")
+    if root.exists() and not root.is_dir():
+        fail("target root must be a directory")
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink():
+        fail("target root must not be a symbolic link")
+    return root
+
+def safe_target_path(root, relative, allow_missing=True):
+    safe_path(relative)
+    current = root
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        if current.is_symlink():
+            fail("target path contains a symbolic link: " + relative)
+        if current.exists() and not (current.is_dir() or current.is_file()):
+            fail("target path contains a special filesystem entry: " + relative)
+    parent = (root / PurePosixPath(relative)).parent
+    if not parent.resolve().is_relative_to(root):
+        fail("target path escapes its root: " + relative)
+    if not allow_missing and not (root / PurePosixPath(relative)).exists():
+        fail("installed package file is missing: " + relative)
+    return root / PurePosixPath(relative)
+
+def package_database(root):
+    database = root / "var/lib/kerynth/packages"
+    if database.is_symlink():
+        fail("package database path must not be a symbolic link")
+    database.mkdir(parents=True, exist_ok=True)
+    if not database.resolve().is_relative_to(root):
+        fail("package database escapes target root")
+    return database
+
+def read_installed(root):
+    database = package_database(root)
+    installed = {}
+    for record in sorted(database.glob("*.json")):
+        if record.is_symlink() or not record.is_file():
+            fail("package database contains a non-regular entry: " + record.name)
+        try:
+            value = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PackageError("cannot read installed package record: " + record.name) from exc
+        if not isinstance(value, dict) or value.get("name") != record.stem or not isinstance(value.get("version"), str):
+            fail("invalid installed package record: " + record.name)
+        installed[record.stem] = value
+    return installed
+
+def version_matches(installed, requested):
+    return requested is None or installed == requested
+
+def validate_relations(manifest, installed):
+    name = manifest["name"]
+    if name in installed:
+        fail("package is already installed: " + name)
+    if manifest["architecture"] not in ("noarch", "x86_64"):
+        fail("package architecture does not match this target")
+    for dependency in manifest["dependencies"]:
+        item = installed.get(dependency["name"])
+        if item is None:
+            fail("missing dependency: " + dependency["name"])
+        if not version_matches(item["version"], dependency.get("version")):
+            fail("dependency version mismatch: " + dependency["name"])
+    for conflict in manifest["conflicts"]:
+        item = installed.get(conflict["name"])
+        if item is not None and version_matches(item["version"], conflict.get("version")):
+            fail("package conflicts with installed package: " + conflict["name"])
+    for installed_name, item in installed.items():
+        for conflict in item.get("conflicts", []):
+            if conflict.get("name") == name and version_matches(manifest["version"], conflict.get("version")):
+                fail("installed package {} conflicts with {}".format(installed_name, name))
+
+def atomic_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    if temporary.exists() or temporary.is_symlink():
+        fail("temporary package database file already exists: " + temporary.name)
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+def install(args):
+    root = target_root(args.root)
+    manifest, payload = read_verified_package(args.package, args.keyring)
+    installed = read_installed(root)
+    validate_relations(manifest, installed)
+    archive, members = open_tar(payload, "payload")
+    entries = []
+    created_files = []
+    created_dirs = []
+    try:
+        for member in members:
+            relative = safe_path(member.name)
+            target = safe_target_path(root, relative)
+            if member.isdir():
+                if target.exists() and not target.is_dir():
+                    fail("directory path collides with an existing file: " + relative)
+                entries.append((member, relative, target))
+            else:
+                if target.exists():
+                    fail("package file would overwrite an existing path: " + relative)
+                entries.append((member, relative, target))
+        for member, relative, target in entries:
+            if member.isdir():
+                if not target.exists():
+                    target.mkdir(parents=True, exist_ok=True)
+                    created_dirs.append(target)
+                continue
+            parent = target.parent
+            missing = []
+            while parent != root and not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for directory in reversed(missing):
+                directory.mkdir()
+                created_dirs.append(directory)
+            stream = archive.extractfile(member)
+            if stream is None:
+                fail("cannot read package payload: " + relative)
+            temporary = target.with_name(target.name + ".ker-tmp")
+            if temporary.exists() or temporary.is_symlink():
+                fail("temporary package file already exists: " + relative)
+            digest = hashlib.sha256()
+            try:
+                with stream, temporary.open("xb") as output:
+                    while True:
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        output.write(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.chmod(temporary, member.mode & 0o777)
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+            created_files.append({"path": relative, "sha256": digest.hexdigest(), "mode": member.mode & 0o777})
+        database = package_database(root)
+        record = {
+            "format_version": 1,
+            "name": manifest["name"],
+            "version": manifest["version"],
+            "architecture": manifest["architecture"],
+            "description": manifest["description"],
+            "dependencies": manifest["dependencies"],
+            "conflicts": manifest["conflicts"],
+            "files": created_files,
+            "directories": [path.relative_to(root).as_posix() for path in created_dirs],
+            "signing_key_id": manifest["signing_key_id"]
+        }
+        atomic_json(database / (manifest["name"] + ".json"), record)
+    except Exception:
+        for item in reversed(created_files):
+            path = root / PurePosixPath(item["path"])
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
+        for directory in reversed(created_dirs):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        raise
+    finally:
+        archive.close()
+    print("Installed {} {} into {}".format(manifest["name"], manifest["version"], root))
+
+def remove(args):
+    root = target_root(args.root)
+    installed = read_installed(root)
+    name = args.name
+    record = installed.get(name)
+    if record is None:
+        fail("package is not installed: " + name)
+    dependents = []
+    for other_name, other in installed.items():
+        if other_name == name:
+            continue
+        for dependency in other.get("dependencies", []):
+            if dependency["name"] == name:
+                dependents.append(other_name)
+    if dependents and not args.force:
+        fail("package is required by installed packages: " + ", ".join(sorted(dependents)))
+    files = record.get("files")
+    directories = record.get("directories")
+    if not isinstance(files, list) or not isinstance(directories, list):
+        fail("installed package record has invalid ownership data")
+    verified = []
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("sha256"), str):
+            fail("installed file record is invalid")
+        path = safe_target_path(root, item["path"], allow_missing=False)
+        if not path.is_file() or path.is_symlink():
+            fail("installed path is no longer a regular file: " + item["path"])
+        if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+            fail("installed file was modified; refusing to remove: " + item["path"])
+        verified.append(path)
+    directory_paths = [safe_target_path(root, item) for item in directories]
+    for path in verified:
+        path.unlink()
+    for path in reversed(directory_paths):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    record_path = package_database(root) / (name + ".json")
+    record_path.unlink()
+    print("Removed " + name)
+
+def list_installed(args):
+    root = target_root(args.root)
+    installed = read_installed(root)
+    if not installed:
+        print("No packages installed.")
+        return
+    for name, record in sorted(installed.items()):
+        print("{} {} ({})".format(name, record["version"], record.get("architecture", "unknown")))
 
 def main(argv=None):
     parser=argparse.ArgumentParser(prog="ker-package"); commands=parser.add_subparsers(dest="command",required=True)
     b=commands.add_parser("build"); b.add_argument("--payload-dir",required=True); b.add_argument("--name",required=True); b.add_argument("--version",required=True); b.add_argument("--architecture",choices=("x86_64","noarch"),default="x86_64"); b.add_argument("--description",required=True); b.add_argument("--key-id",required=True); b.add_argument("--private-key",required=True); b.add_argument("--output",required=True); b.set_defaults(handler=build)
     v=commands.add_parser("verify"); v.add_argument("package"); v.add_argument("--keyring",required=True); v.set_defaults(handler=verify)
+    i=commands.add_parser("install"); i.add_argument("package"); i.add_argument("--keyring",required=True); i.add_argument("--root",required=True); i.set_defaults(handler=install)
+    r=commands.add_parser("remove"); r.add_argument("name"); r.add_argument("--root",required=True); r.add_argument("--force",action="store_true"); r.set_defaults(handler=remove)
+    l=commands.add_parser("list"); l.add_argument("--root",required=True); l.set_defaults(handler=list_installed)
     args=parser.parse_args(argv)
     try: args.handler(args); return 0
     except PackageError as exc: print("ker-package: error: "+str(exc),file=sys.stderr); return 1
