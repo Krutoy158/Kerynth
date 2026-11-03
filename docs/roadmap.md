@@ -33,6 +33,7 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [ ] Build upstream Linux kernel from pinned source using the reviewed x86_64 configuration fragment.
 - [x] Add deterministic `newc` CPIO + gzip initramfs archive builder and initial PID 1 handoff stub.
 - [x] Add initial root device, UUID, and LABEL discovery plus switch-root handoff script (QEMU validation still required).
+- [x] Validate the selected installer/Live boot mode and expose it through a volatile `/run/kerynth/boot-mode` marker.
 - [ ] Generate initramfs from the selected kernel modules and firmware set.
 - [ ] Complete PID 1 behavior and test it under QEMU.
 - [ ] Provide console login and clean shutdown/reboot.
