@@ -119,7 +119,8 @@ This roadmap separates design work from implemented and tested functionality. A 
 ## M9 — ISO and releases
 
 - [ ] Reproducible ISO generation from the tested staging root.
-- [x] Specify the English boot menu: Kerynth logo, **Manual Installation**, **Automatic Installation**, and **Live System** (implementation and ISO validation remain open).
+- [x] Specify the English boot menu: KER logo, **Manual Installation**, **Automatic Installation**, and **Live System**.
+- [x] Add a minimal GRUB menu prototype with distinct installer/live kernel modes and no automatic timeout (GRUB/ISO integration and QEMU validation remain open).
 - [ ] Live mode with no automatic internal-disk writes or installation.
 - [ ] QEMU tests for Live boot, shutdown, and installer safety.
 - [ ] Publish the ISO, SHA-256 checksum, and boot logs as GitHub Actions artifacts.
