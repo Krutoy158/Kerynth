@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+from pathlib import Path, PurePosixPath
+
+UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
+USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+HOST_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
+HASH_PATTERN = re.compile(r"^\$(?:5|6|y)\$[A-Za-z0-9./$]{8,500}$")
+
+
+class InstallError(Exception):
+    pass
+
+
+def fail(message):
+    raise InstallError(message)
+
+
+def regular_file(path):
+    if path.is_symlink() or not path.is_file():
+        fail("required input is not a regular file: " + str(path))
+    return path
+
+
+def ensure_safe_source(source, workspace):
+    if source.is_symlink() or not source.is_dir():
+        fail("rootfs source must be a normal directory")
+    root = source.resolve(strict=True)
+    if not root.is_relative_to(workspace) or root != (workspace / "rootfs").resolve():
+        fail("rootfs source must be .kerynth-work/rootfs")
+    if not (root / ".kerynth-rootfs.json").is_file():
+        fail("rootfs source is missing its Kerynth build marker")
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            resolved = path.resolve(strict=False)
+            if not resolved.is_relative_to(root):
+                fail("rootfs contains an escaping symbolic link: " + str(path.relative_to(root)))
+        elif not (path.is_file() or path.is_dir()):
+            fail("rootfs contains a special filesystem entry: " + str(path.relative_to(root)))
+    return root
+
+
+def safe_regular(root, relative):
+    path = root / PurePosixPath(relative)
+    if path.is_symlink() or not path.is_file():
+        fail("required rootfs file is missing or unsafe: " + relative)
+    return path
+
+
+def update_accounts(root, username, password_hash):
+    etc = root / "etc"
+    passwd_path = safe_regular(root, "etc/passwd")
+    group_path = safe_regular(root, "etc/group")
+    shadow_path = safe_regular(root, "etc/shadow")
+    passwd = passwd_path.read_text(encoding="utf-8").splitlines()
+    group = group_path.read_text(encoding="utf-8").splitlines()
+    shadow = shadow_path.read_text(encoding="utf-8").splitlines()
+
+    user_rows = []
+    for line in passwd:
+        fields = line.split(":")
+        if len(fields) != 7:
+            fail("invalid /etc/passwd row")
+        if fields[0] in ("kerynth", username) or fields[2] == "1000":
+            continue
+        user_rows.append(line)
+    if not any(line.split(":", 1)[0] == "root" for line in user_rows):
+        fail("root account is missing from /etc/passwd")
+    user_rows.append("{}:x:1000:1000:{}:/home/{}:/bin/sh".format(username, username, username))
+
+    group_rows = []
+    for line in group:
+        fields = line.split(":")
+        if len(fields) != 4:
+            fail("invalid /etc/group row")
+        if fields[0] in ("users", username) or fields[2] == "1000":
+            continue
+        group_rows.append(line)
+    group_rows.append("users:x:1000:{}".format(username))
+
+    shadow_rows = []
+    for line in shadow:
+        fields = line.split(":")
+        if len(fields) != 9:
+            fail("invalid /etc/shadow row")
+        if fields[0] in ("kerynth", username):
+            continue
+        shadow_rows.append(line)
+    if not any(line.split(":", 1)[0] == "root" for line in shadow_rows):
+        fail("root account is missing from /etc/shadow")
+    shadow_rows.append("{}:{}:19000:0:99999:7:::".format(username, password_hash))
+
+    passwd_path.write_text("\n".join(user_rows) + "\n", encoding="utf-8")
+    group_path.write_text("\n".join(group_rows) + "\n", encoding="utf-8")
+    shadow_path.write_text("\n".join(shadow_rows) + "\n", encoding="utf-8")
+    os.chmod(shadow_path, 0o600)
+
+    home = root / "home"
+    home.mkdir(exist_ok=True)
+    existing = home / username
+    if existing.exists() or existing.is_symlink():
+        fail("user home directory already exists")
+    previous = home / "kerynth"
+    if previous.exists() and previous.is_dir() and not previous.is_symlink():
+        os.replace(previous, existing)
+    else:
+        existing.mkdir()
+    os.chmod(existing, 0o700)
+
+
+def prepare_install(workspace, target_name, mode, root_uuid, username, hostname, password_hash):
+    workspace = Path(workspace).resolve(strict=True)
+    if workspace.is_symlink() or not workspace.is_dir():
+        fail("workspace must be a normal directory")
+    if not NAME_PATTERN.fullmatch(target_name):
+        fail("target name is invalid")
+    if mode not in ("manual", "automatic"):
+        fail("installation mode must be manual or automatic")
+    if not UUID_PATTERN.fullmatch(root_uuid):
+        fail("root filesystem UUID is invalid")
+    if not USER_PATTERN.fullmatch(username) or username == "root":
+        fail("username is invalid")
+    if not HOST_PATTERN.fullmatch(hostname):
+        fail("hostname is invalid")
+    if not HASH_PATTERN.fullmatch(password_hash):
+        fail("password hash must be a SHA-256, SHA-512, or yescrypt crypt hash")
+
+    source = ensure_safe_source(workspace / "rootfs", workspace)
+    kernel = regular_file(workspace / "kernel" / "vmlinuz")
+    initramfs = regular_file(workspace / "initramfs.cpio.gz")
+
+    targets = workspace / "targets"
+    if targets.is_symlink():
+        fail("target directory must not be a symbolic link")
+    targets.mkdir(exist_ok=True)
+    if not targets.resolve().is_relative_to(workspace):
+        fail("target directory escapes the build workspace")
+    destination = targets / target_name
+    if destination.exists() or destination.is_symlink():
+        fail("installation target already exists; refusing to overwrite it")
+
+    temporary = Path(tempfile.mkdtemp(prefix=".kerynth-install-", dir=targets))
+    staged_root = temporary / "root"
+    try:
+        shutil.copytree(source, staged_root, symlinks=True)
+        update_accounts(staged_root, username, password_hash)
+
+        (staged_root / "etc/hostname").write_text(hostname + "\n", encoding="utf-8")
+        (staged_root / "etc/hosts").write_text(
+            "127.0.0.1 localhost\n127.0.1.1 {}\n::1 localhost ip6-localhost ip6-loopback\n".format(hostname),
+            encoding="utf-8",
+        )
+
+        fstab = (
+            "UUID={} / ext4 defaults,noatime 0 1\n"
+            "proc /proc proc nosuid,nodev,noexec 0 0\n"
+            "sysfs /sys sysfs nosuid,nodev,noexec 0 0\n"
+            "devtmpfs /dev devtmpfs mode=0755,nosuid 0 0\n"
+        ).format(root_uuid)
+        (staged_root / "etc/fstab").write_text(fstab, encoding="utf-8")
+
+        boot = staged_root / "boot"
+        grub = boot / "grub"
+        grub.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(kernel, boot / "vmlinuz")
+        shutil.copy2(initramfs, boot / "initramfs.cpio.gz")
+        grub_config = (
+            "set default=0\n"
+            "set timeout=-1\n"
+            "search --no-floppy --fs-uuid --set=root {}\n"
+            "menuentry \"Kerynth Linux\" --id kerynth-installed {{\n"
+            "    linux /boot/vmlinuz root=UUID={} rootfstype=ext4 rootflags=rw kerynth.mode=installed console=tty0 console=ttyS0,115200n8\n"
+            "    initrd /boot/initramfs.cpio.gz\n"
+            "}}\n"
+        ).format(root_uuid, root_uuid)
+        (grub / "grub.cfg").write_text(grub_config, encoding="utf-8")
+
+        state = {
+            "format_version": 1,
+            "mode": mode,
+            "hostname": hostname,
+            "username": username,
+            "root_uuid": root_uuid.lower(),
+            "filesystem": "ext4",
+            "bootloader_installed": False,
+            "partition_table_modified": False,
+        }
+        (staged_root / "var/lib/kerynth/installation.json").write_text(
+            json.dumps(state, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(staged_root, destination)
+        return destination
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-install-tree")
+    parser.add_argument("--target", required=True)
+    parser.add_argument("--mode", choices=("manual", "automatic"), required=True)
+    parser.add_argument("--root-uuid", required=True)
+    parser.add_argument("--username", required=True)
+    parser.add_argument("--hostname", default="kerynth")
+    parser.add_argument("--password-hash", required=True)
+    args = parser.parse_args(argv)
+
+    try:
+        project = Path(__file__).resolve().parents[1]
+        workspace = (project / ".kerynth-work").resolve(strict=True)
+        target = prepare_install(
+            workspace,
+            args.target,
+            args.mode,
+            args.root_uuid,
+            args.username,
+            args.hostname,
+            args.password_hash,
+        )
+        print("Prepared Kerynth installation tree: " + str(target))
+        print("No partitions, filesystems, boot entries, or block devices were modified.")
+        return 0
+    except (InstallError, OSError, shutil.Error, json.JSONDecodeError) as exc:
+        print("kerynth-install-tree: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
