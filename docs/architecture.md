@@ -96,6 +96,22 @@ The installer must:
 
 Kerynth contains no telemetry, analytics, tracking identifiers, or diagnostic upload mechanism. The operating system must not send usage, hardware inventory, crash, or application data to Kerynth or third parties. Troubleshooting logs remain local and under the user's control. Network access is limited to explicitly requested operations such as package downloads and system updates.
 
+## 11. User authority and privilege model
+
+The interactive user is the primary owner of the system experience, personal data, files, and preferences. The root account is an administrative role for maintaining the operating system; it is not the default working identity.
+
+The system must follow these rules:
+
+- Create and use an unprivileged user account for normal work. Do not require routine root login.
+- Do not launch desktop applications, browsers, development tools, or package build jobs as root.
+- Administrative actions must be explicit, narrowly scoped, and explain what will change before authorization.
+- Use a dedicated privilege broker with policy checks for graphical administration; do not give desktop applications unrestricted root access.
+- Never silently elevate a process, modify user files as root, or change user-owned settings without consent.
+- Keep user data and configuration separate from system-owned files. Package installation must not overwrite user data without an explicit decision.
+- Root access remains technically powerful, so security boundaries, audit logs, and recovery procedures must assume that privileged code can affect the whole system.
+
+The intended model is user-first administration: root maintains the system, while the user controls their own session and approves changes that affect it.
+
 ## 10. Desktop
 
 A desktop is optional. KDE Plasma is a planned profile, not part of the minimal base system. The desktop profile will define its display manager, session, audio stack, network integration, portals, and hardware integration as a tested set.
