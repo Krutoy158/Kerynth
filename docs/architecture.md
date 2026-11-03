@@ -94,7 +94,7 @@ The installer must:
 
 ## 9. Privacy and diagnostics
 
-No mandatory telemetry. Local logs are retained for troubleshooting and must be documented and configurable. Any optional network diagnostic upload must be opt-in, previewable, and scrubbed of sensitive information.
+Kerynth contains no telemetry, analytics, tracking identifiers, or diagnostic upload mechanism. The operating system must not send usage, hardware inventory, crash, or application data to Kerynth or third parties. Troubleshooting logs remain local and under the user's control. Network access is limited to explicitly requested operations such as package downloads and system updates.
 
 ## 10. Desktop
 
