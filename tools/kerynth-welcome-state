@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+STATE_FILENAME = "welcome.json"
+
+
+class WelcomeStateError(Exception):
+    pass
+
+
+def resolve_state_path(mode, environ=None, home=None, state_dir=None):
+    if mode not in ("installed", "live"):
+        raise WelcomeStateError("mode must be 'installed' or 'live'")
+
+    if state_dir is not None:
+        base = Path(state_dir).expanduser()
+    else:
+        environment = os.environ if environ is None else environ
+        if mode == "live":
+            value = environment.get("XDG_RUNTIME_DIR")
+            if not value:
+                raise WelcomeStateError("XDG_RUNTIME_DIR is required for Live session state")
+            base = Path(value).expanduser()
+        else:
+            value = environment.get("XDG_CONFIG_HOME")
+            if value:
+                base = Path(value).expanduser()
+            else:
+                home_path = Path(home or environment.get("HOME", str(Path.home()))).expanduser()
+                base = home_path / ".config"
+
+    return base / "kerynth" / STATE_FILENAME
+
+
+def read_enabled(path):
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError as exc:
+        raise WelcomeStateError(f"cannot inspect welcome state: {exc}") from exc
+
+    if not stat.S_ISREG(metadata.st_mode):
+        return True
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return True
+
+    if not isinstance(data, dict):
+        return True
+    if set(data) != {"schema_version", "show_at_startup"}:
+        return True
+    if type(data["schema_version"]) is not int or data["schema_version"] != SCHEMA_VERSION:
+        return True
+    if type(data["show_at_startup"]) is not bool:
+        return True
+
+    return data["show_at_startup"]
+
+
+def write_enabled(path, enabled):
+    if type(enabled) is not bool:
+        raise WelcomeStateError("show_at_startup must be a boolean")
+
+    path = Path(path)
+    parent = path.parent
+    if parent.is_symlink():
+        raise WelcomeStateError("welcome state directory must not be a symbolic link")
+
+    try:
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise WelcomeStateError(f"cannot create welcome state directory: {exc}") from exc
+
+    if parent.is_symlink():
+        raise WelcomeStateError("welcome state directory must not be a symbolic link")
+    if path.is_symlink():
+        raise WelcomeStateError("welcome state file must not be a symbolic link")
+
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "show_at_startup": enabled,
+    }
+    temporary_path = None
+
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".welcome-",
+            suffix=".tmp",
+            dir=parent,
+        )
+        temporary_path = Path(temporary_name)
+        os.fchmod(descriptor, 0o600)
+
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        if path.is_symlink():
+            raise WelcomeStateError("welcome state file must not be a symbolic link")
+
+        os.replace(temporary_path, path)
+        temporary_path = None
+
+        directory_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except WelcomeStateError:
+        raise
+    except OSError as exc:
+        raise WelcomeStateError(f"cannot save welcome state: {exc}") from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def should_show(mode, environ=None, home=None, state_dir=None):
+    path = resolve_state_path(mode, environ=environ, home=home, state_dir=state_dir)
+    return read_enabled(path)
+
+
+def set_show_at_startup(mode, enabled, environ=None, home=None, state_dir=None):
+    path = resolve_state_path(mode, environ=environ, home=home, state_dir=state_dir)
+    write_enabled(path, enabled)
+    return path
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-welcome-state")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    check_parser = commands.add_parser("should-show")
+    check_parser.add_argument("--mode", choices=("installed", "live"), required=True)
+    check_parser.add_argument("--state-dir")
+
+    set_parser = commands.add_parser("set")
+    set_parser.add_argument("--mode", choices=("installed", "live"), required=True)
+    set_parser.add_argument("--state-dir")
+    choice = set_parser.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--show", action="store_true")
+    choice.add_argument("--hide", action="store_true")
+
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "should-show":
+            enabled = should_show(args.mode, state_dir=args.state_dir)
+            print("show" if enabled else "hidden")
+            return 0
+
+        enabled = args.show
+        set_show_at_startup(args.mode, enabled, state_dir=args.state_dir)
+        print(f"Saved startup preference: {'show' if enabled else 'hidden'}")
+        return 0
+    except WelcomeStateError as exc:
+        print(f"kerynth-welcome-state: error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
