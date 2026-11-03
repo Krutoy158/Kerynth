@@ -1,6 +1,6 @@
 # ISO Staging Layout
 
-The ISO assembly prototype uses one explicit staging tree:
+The build pipeline assembles one explicit staging tree under `.kerynth-work/iso-root/`:
 
 ```text
 iso-root/
@@ -13,31 +13,51 @@ iso-root/
     └── rootfs.squashfs
 ```
 
+## Boot menu
+
+The GRUB menu contains exactly three English choices:
+
+- Manual Installation
+- Automatic Installation
+- Live System
+
+The KER ASCII logo is shown without system information, and the menu has no automatic timeout. Every entry probes the boot filesystem UUID and passes it to initramfs as `kerynth.media=UUID=...`.
+
 ## Required artifacts
 
-- `boot/grub/grub.cfg` is the approved KER menu. It must contain exactly the Manual Installation, Automatic Installation, and Live System entries, with no automatic timeout.
-- `boot/vmlinuz` is the built x86_64 Linux kernel.
-- `boot/initramfs.cpio.gz` is a gzip-compressed newc CPIO archive. It must contain executable `/init`, `/bin/busybox`, and `/lib/kerynth-boot-mode`.
-- `live/rootfs.squashfs` is the compressed live userspace image.
+- `boot/grub/grub.cfg` — the approved KER menu with media UUID handoff.
+- `boot/vmlinuz` — built x86_64 Linux kernel.
+- `boot/initramfs.cpio.gz` — gzip-compressed newc CPIO with executable `/init`, `/bin/busybox`, and `/lib/kerynth-boot-mode`.
+- `live/rootfs.squashfs` — read-only compressed root filesystem created from the minimal Kerynth rootfs.
 
-## Validation and assembly
+## Commands
 
-Run the staging checks:
-
-```sh
-python3 tools/kerynth-iso check
-```
-
-Build the ISO after the required artifacts are present and validated:
+Build the complete staging tree:
 
 ```sh
-python3 tools/kerynth-iso build
+make iso-stage
 ```
 
-The same commands are available as `make iso-check` and `make iso`. The builder uses `grub-mkrescue` and requires the GRUB BIOS/EFI tools and `xorriso`.
+Validate it:
 
-The staging validator rejects symbolic links and special files, checks the exact boot menu, parses the initramfs CPIO entries, checks the required executable boot files, and verifies the SquashFS superblock magic. The output ISO is written only under `.kerynth-work/`; the tool does not use sudo, write boot entries, partition disks, or access block devices.
+```sh
+make iso-check
+```
 
-## Limitations
+Package the ISO:
 
-This is an ISO packaging prototype, not a claim that a bootable Kerynth ISO exists. The kernel file is checked for presence but is not built or ABI-validated by this tool. The SquashFS image is checked for its magic and minimum superblock size, not fully decompressed or cryptographically verified. Most importantly, the current initramfs still needs an ISO-media discovery and SquashFS mount path, and the target userspace still needs to dispatch the three boot modes into real installer and Live sessions. A successful ISO assembly alone does not prove that the image boots. QEMU boot and disk-safety tests remain mandatory before release.
+```sh
+make iso
+```
+
+Run all stages in sequence:
+
+```sh
+make build
+```
+
+The packager uses `grub-mkrescue` and `xorriso`. It writes only below `.kerynth-work/`, does not use sudo, and does not access block devices.
+
+## Current limitations
+
+The initramfs code now contains the explicit read-only media mount and SquashFS handoff, but the actual kernel, rootfs, initramfs, and ISO have not yet been built and boot-tested together in QEMU. The installer entries still reach a placeholder that performs no installation and does not modify disks. No release ISO should be advertised as bootable until QEMU tests verify boot, console login, read-only Live behavior, and shutdown.
