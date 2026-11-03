@@ -1,0 +1,19 @@
+name: Build tool
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate build configuration
+        run: python3 tools/aether-build check
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
