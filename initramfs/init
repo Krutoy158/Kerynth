@@ -30,6 +30,7 @@ ROOTDELAY=0
 MEDIA=
 ROOT_SEEN=0
 MEDIA_SEEN=0
+MEDIA_FSTYPE=
 
 for item in $CMDLINE; do
     case "$item" in
@@ -103,7 +104,12 @@ case "$BOOT_MODE" in
         if [ -z "$MEDIA_DEVICE" ] || [ ! -b "$MEDIA_DEVICE" ]; then
             fail "Kerynth boot media was not found."
         fi
-        if ! $BB mount -o ro "$MEDIA_DEVICE" /media; then
+        MEDIA_FSTYPE="$($BB blkid -s TYPE -o value "$MEDIA_DEVICE" 2>/dev/null)"
+        case "$MEDIA_FSTYPE" in
+            iso9660) ;;
+            *) fail "unsupported Kerynth boot media filesystem." ;;
+        esac
+        if ! $BB mount -t "$MEDIA_FSTYPE" -o ro "$MEDIA_DEVICE" /media; then
             fail "cannot mount Kerynth boot media read-only."
         fi
         if [ ! -f /media/live/rootfs.squashfs ]; then
