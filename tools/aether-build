@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
 import tempfile
 import tomllib
@@ -72,11 +71,15 @@ def load_lock(lock_path):
         raise BuildError("sources.lock must contain a sources array")
 
     names = set()
+    filenames = set()
     for source in sources:
         validate_source(source)
         if source["name"] in names:
             raise BuildError(f"duplicate source name: {source['name']}")
+        if source["filename"] in filenames:
+            raise BuildError(f"duplicate source filename: {source['filename']}")
         names.add(source["name"])
+        filenames.add(source["filename"])
 
     return sources
 
