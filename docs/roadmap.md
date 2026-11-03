@@ -34,6 +34,8 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [ ] Implement and test PID 1 behavior.
 - [ ] Provide console login and clean shutdown/reboot.
 - [ ] Boot in QEMU using a virtual disk.
+- [ ] Add a non-installing Live boot mode with temporary runtime storage.
+- [ ] Verify Live mode does not write to internal disks or alter boot entries.
 - [ ] Publish boot logs and test configuration.
 
 **Exit criteria:** QEMU reaches a usable console login and shuts down cleanly.
@@ -64,12 +66,13 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M5 — Debian compatibility
 
-- [ ] Inspect .deb ar containers and control/data archives.
+- [ ] Inspect .deb ar containers and control/data archives without extracting to the host.
 - [ ] Parse Debian control metadata.
 - [ ] Map supported dependency expressions.
 - [ ] Report unsupported maintainer scripts, triggers, dependencies, and paths.
 - [ ] Implement non-executing conversion preview.
 - [ ] Add explicit conversion command and tests.
+- [ ] Keep direct installation of arbitrary `.deb` files disabled until compatibility and safety are proven.
 
 **Exit criteria:** compatible test packages convert reproducibly; incompatible packages fail safely with a useful report.
 
@@ -107,10 +110,11 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M9 — ISO and releases
 
-- [ ] Reproducible ISO generation.
-- [ ] English boot menu with graphical, manual, and accessibility paths.
-- [ ] QEMU boot and installer CI.
-- [ ] Signed checksums and release artifacts.
-- [ ] GitHub Actions release workflow.
+- [ ] Reproducible ISO generation from the tested staging root.
+- [ ] Boot menu with **Live Kerynth** and **Install Kerynth** as separate choices.
+- [ ] Live mode with no automatic internal-disk writes or installation.
+- [ ] QEMU tests for Live boot, shutdown, and installer safety.
+- [ ] Publish the ISO, SHA-256 checksum, and boot logs as GitHub Actions artifacts.
+- [ ] Signed release checksums and release workflow.
 
-**Exit criteria:** a published ISO boots and installs in QEMU, with checksums and test logs attached.
+**Exit criteria:** the ISO boots in QEMU, Live mode reaches a usable session without installing, and the installer requires explicit user action.
