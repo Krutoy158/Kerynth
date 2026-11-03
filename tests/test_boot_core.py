@@ -126,7 +126,7 @@ class BootModeParserTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result = self.run_parser(f"quiet root=UUID=abc kerynth.mode={mode}")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, f"{mode}\\n")
+                self.assertEqual(result.stdout, f"{mode}\n")
 
     def test_parser_rejects_missing_unknown_and_duplicate_modes(self):
         invalid_cmdlines = (
