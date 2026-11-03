@@ -1,36 +1,49 @@
 #!/bin/busybox sh
-
 export PATH=/bin:/sbin
 BB=/bin/busybox
-$BB mkdir -p /proc /sys /dev
-if ! $BB mount -t proc proc /proc; then
-    $BB echo "Kerynth: failed to mount /proc."
+
+fail() {
+    $BB echo "Kerynth: $1"
     exec $BB sh
+}
+
+$BB mkdir -p /proc /sys /dev /media /newroot
+if ! $BB mount -t proc proc /proc; then
+    fail "failed to mount /proc."
 fi
 if ! $BB mount -t sysfs sysfs /sys; then
-    $BB echo "Kerynth: failed to mount /sys."
-    exec $BB sh
+    fail "failed to mount /sys."
 fi
 if ! $BB mount -t devtmpfs devtmpfs /dev; then
-    $BB echo "Kerynth: failed to mount /dev."
-    exec $BB sh
+    fail "failed to mount /dev."
 fi
+
 CMDLINE="$($BB cat /proc/cmdline 2>/dev/null)"
 if ! BOOT_MODE="$($BB sh /lib/kerynth-boot-mode "$CMDLINE" 2>/dev/null)"; then
-    $BB echo "Kerynth: missing, duplicated, or unsupported boot mode."
-    exec $BB sh
+    fail "missing, duplicated, or unsupported boot mode."
 fi
+
 ROOT=
 ROOTFSTYPE=
 ROOTFLAGS=
 ROOTDELAY=0
+MEDIA=
+ROOT_SEEN=0
+MEDIA_SEEN=0
 
 for item in $CMDLINE; do
     case "$item" in
-        root=*) ROOT="${item#root=}" ;;
+        root=*)
+            ROOT="${item#root=}"
+            ROOT_SEEN=$((ROOT_SEEN + 1))
+            ;;
         rootfstype=*) ROOTFSTYPE="${item#rootfstype=}" ;;
         rootflags=*) ROOTFLAGS="${item#rootflags=}" ;;
         rootdelay=*) ROOTDELAY="${item#rootdelay=}" ;;
+        kerynth.media=*)
+            MEDIA="${item#kerynth.media=}"
+            MEDIA_SEEN=$((MEDIA_SEEN + 1))
+            ;;
     esac
 done
 
@@ -41,89 +54,113 @@ if [ "$ROOTDELAY" -gt 30 ]; then
     ROOTDELAY=30
 fi
 
-if [ -x /bin/busybox ]; then
-    $BB mdev -s 2>/dev/null || true
-fi
-
+$BB mdev -s 2>/dev/null || true
 if [ "$ROOTDELAY" -gt 0 ]; then
     $BB sleep "$ROOTDELAY"
 fi
 
-if [ -z "$ROOT" ]; then
-    $BB echo "Kerynth: missing root= kernel parameter."
-    exec $BB sh
-fi
+resolve_uuid() {
+    wanted_uuid="$1"
+    for device in $($BB find /dev -type b 2>/dev/null); do
+        found_uuid="$($BB blkid -s UUID -o value "$device" 2>/dev/null)"
+        if [ "$found_uuid" = "$wanted_uuid" ]; then
+            printf '%s\n' "$device"
+            return 0
+        fi
+    done
+    return 1
+}
 
-case "$ROOT" in
-    UUID=*)
-        wanted_uuid="${ROOT#UUID=}"
-        case "$wanted_uuid" in
-            ''|*[!A-Fa-f0-9-]*)
-                $BB echo "Kerynth: invalid root UUID."
-                exec $BB sh
+resolve_label() {
+    wanted_label="$1"
+    for device in $($BB find /dev -type b 2>/dev/null); do
+        found_label="$($BB blkid -s LABEL -o value "$device" 2>/dev/null)"
+        if [ "$found_label" = "$wanted_label" ]; then
+            printf '%s\n' "$device"
+            return 0
+        fi
+    done
+    return 1
+}
+
+case "$BOOT_MODE" in
+    live|installer-manual|installer-automatic)
+        if [ "$ROOT_SEEN" -ne 0 ] || [ "$MEDIA_SEEN" -ne 1 ]; then
+            fail "ISO boot requires exactly one kerynth.media=UUID=... parameter."
+        fi
+        case "$MEDIA" in
+            UUID=*)
+                MEDIA_UUID="${MEDIA#UUID=}"
+                case "$MEDIA_UUID" in
+                    ''|*[!A-Fa-f0-9-]*) fail "invalid Live media UUID." ;;
+                esac
+                ;;
+            *)
+                fail "Live media must be identified by UUID."
                 ;;
         esac
-        ROOT=
-        for device in $($BB find /dev -type b 2>/dev/null); do
-            found_uuid="$($BB blkid -s UUID -o value "$device" 2>/dev/null)"
-            if [ "$found_uuid" = "$wanted_uuid" ]; then
-                ROOT="$device"
-                break
-            fi
-        done
+        MEDIA_DEVICE="$(resolve_uuid "$MEDIA_UUID")" || MEDIA_DEVICE=
+        if [ -z "$MEDIA_DEVICE" ] || [ ! -b "$MEDIA_DEVICE" ]; then
+            fail "Kerynth boot media was not found."
+        fi
+        if ! $BB mount -o ro "$MEDIA_DEVICE" /media; then
+            fail "cannot mount Kerynth boot media read-only."
+        fi
+        if [ ! -f /media/live/rootfs.squashfs ]; then
+            fail "boot media does not contain live/rootfs.squashfs."
+        fi
+        if ! $BB mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /newroot; then
+            fail "cannot mount the Live SquashFS image read-only."
+        fi
         ;;
-    LABEL=*)
-        wanted_label="${ROOT#LABEL=}"
-        case "$wanted_label" in
-            ''|*[!A-Za-z0-9._+-]*)
-                $BB echo "Kerynth: invalid root label."
-                exec $BB sh
-                ;;
-        esac
-        ROOT=
-        for device in $($BB find /dev -type b 2>/dev/null); do
-            found_label="$($BB blkid -s LABEL -o value "$device" 2>/dev/null)"
-            if [ "$found_label" = "$wanted_label" ]; then
-                ROOT="$device"
-                break
-            fi
-        done
-        ;;
-    /dev/*)
+    installed)
+        if [ "$ROOT_SEEN" -ne 1 ] || [ "$MEDIA_SEEN" -ne 0 ] || [ -z "$ROOT" ]; then
+            fail "installed boot requires exactly one root= parameter."
+        fi
         case "$ROOT" in
-            *..*|*[!A-Za-z0-9_./+-]*)
-                $BB echo "Kerynth: invalid root device path."
-                exec $BB sh
+            UUID=*)
+                ROOT_UUID="${ROOT#UUID=}"
+                case "$ROOT_UUID" in
+                    ''|*[!A-Fa-f0-9-]*) fail "invalid root UUID." ;;
+                esac
+                ROOT="$(resolve_uuid "$ROOT_UUID")" || ROOT=
+                ;;
+            LABEL=*)
+                ROOT_LABEL="${ROOT#LABEL=}"
+                case "$ROOT_LABEL" in
+                    ''|*[!A-Za-z0-9._+-]*) fail "invalid root label." ;;
+                esac
+                ROOT="$(resolve_label "$ROOT_LABEL")" || ROOT=
+                ;;
+            /dev/*)
+                case "$ROOT" in
+                    *..*|*[!A-Za-z0-9_./+-]*) fail "invalid root device path." ;;
+                esac
+                ;;
+            *)
+                fail "root must be /dev/..., UUID=... or LABEL=..."
                 ;;
         esac
-        ;;
-    *)
-        $BB echo "Kerynth: root must be /dev/..., UUID=... or LABEL=..."
-        exec $BB sh
+        if [ -z "$ROOT" ] || [ ! -b "$ROOT" ]; then
+            fail "root device not found."
+        fi
+        mount_args="-o ro"
+        if [ "$ROOTFLAGS" = "rw" ]; then
+            mount_args="-o rw"
+        fi
+        if [ -n "$ROOTFSTYPE" ]; then
+            case "$ROOTFSTYPE" in
+                *[!A-Za-z0-9_-]*) fail "invalid root filesystem type." ;;
+            esac
+            $BB mount $mount_args -t "$ROOTFSTYPE" "$ROOT" /newroot
+        else
+            $BB mount $mount_args "$ROOT" /newroot
+        fi
+        if [ $? -ne 0 ]; then
+            fail "failed to mount the installed root filesystem."
+        fi
         ;;
 esac
-
-if [ -z "$ROOT" ] || [ ! -b "$ROOT" ]; then
-    $BB echo "Kerynth: root device not found: $ROOT"
-    exec $BB sh
-fi
-
-$BB mkdir -p /newroot
-mount_args="-o ro"
-if [ "$ROOTFLAGS" = "rw" ]; then
-    mount_args="-o rw"
-fi
-
-if [ -n "$ROOTFSTYPE" ]; then
-    $BB mount $mount_args -t "$ROOTFSTYPE" "$ROOT" /newroot
-else
-    $BB mount $mount_args "$ROOT" /newroot
-fi
-
-if [ $? -ne 0 ]; then
-    $BB echo "Kerynth: failed to mount root filesystem: $ROOT"
-    exec $BB sh
-fi
 
 for directory in dev proc sys run; do
     $BB mkdir -p "/newroot/$directory"
@@ -134,19 +171,20 @@ $BB mount --move /proc /newroot/proc
 $BB mount --move /sys /newroot/sys
 
 if ! $BB mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /newroot/run; then
-    $BB echo "Kerynth: failed to create volatile /run."
-    exec $BB sh
+    fail "failed to create volatile /run."
 fi
 
 $BB mkdir -p /newroot/run/kerynth
+if [ "$MEDIA_SEEN" -eq 1 ]; then
+    $BB mkdir -p /newroot/run/kerynth-media
+    $BB mount --move /media /newroot/run/kerynth-media
+fi
 if ! printf '%s\n' "$BOOT_MODE" > /newroot/run/kerynth/boot-mode; then
-    $BB echo "Kerynth: failed to publish boot mode."
-    exec $BB sh
+    fail "failed to publish boot mode."
 fi
 
 if [ -x /newroot/sbin/init ]; then
     exec $BB switch_root /newroot /sbin/init
 fi
 
-$BB echo "Kerynth: /sbin/init is missing on the selected root."
-exec $BB sh
+fail "/sbin/init is missing on the selected root."

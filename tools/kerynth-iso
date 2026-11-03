@@ -140,6 +140,10 @@ def validate_grub_config(path):
         )
         if match is None or mode not in match.group(1):
             fail(f"GRUB entry does not pass its required boot mode: {entry_id}")
+        if "probe --set=kerynth_media_uuid --fs-uuid ($root)" not in match.group(1):
+            fail(f"GRUB entry does not identify the boot medium: {entry_id}")
+        if "kerynth.media=UUID=$kerynth_media_uuid" not in match.group(1):
+            fail(f"GRUB entry does not pass the boot medium UUID: {entry_id}")
         if "linux /boot/vmlinuz" not in match.group(1):
             fail(f"GRUB entry does not load /boot/vmlinuz: {entry_id}")
         if "initrd /boot/initramfs.cpio.gz" not in match.group(1):

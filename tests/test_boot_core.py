@@ -36,6 +36,13 @@ class BootCoreTests(unittest.TestCase):
         self.assertIn('if [ "$ROOTFLAGS" = "rw" ]', content)
         self.assertIn('switch_root /newroot /sbin/init', content)
 
+    def test_live_mounts_explicit_iso_uuid_and_squashfs_read_only(self):
+        content = (ROOT / 'initramfs' / 'init').read_text(encoding='utf-8')
+        self.assertIn('kerynth.media=*', content)
+        self.assertIn('mount -o ro "$MEDIA_DEVICE" /media', content)
+        self.assertIn('mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /newroot', content)
+        self.assertIn('mount --move /media /newroot/run/kerynth-media', content)
+
 
 class BootMenuTests(unittest.TestCase):
     def setUp(self):
@@ -91,6 +98,8 @@ class BootMenuTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(match)
                 self.assertIn(mode, match.group(1))
+                self.assertIn("kerynth.media=UUID=$kerynth_media_uuid", match.group(1))
+                self.assertIn("probe --set=kerynth_media_uuid --fs-uuid ($root)", match.group(1))
                 self.assertIn("initrd /boot/initramfs.cpio.gz", match.group(1))
 
 

@@ -55,6 +55,15 @@ class IsoBuilderTests(unittest.TestCase):
             root = self.make_root(directory)
             self.assertEqual(ISO_TOOL.validate_iso_root(root), root.resolve())
 
+    def test_rejects_grub_entry_without_media_uuid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.make_root(directory)
+            config = root / "boot" / "grub" / "grub.cfg"
+            content = config.read_text(encoding="utf-8")
+            config.write_text(content.replace("kerynth.media=UUID=$kerynth_media_uuid", ""), encoding="utf-8")
+            with self.assertRaises(ISO_TOOL.IsoError):
+                ISO_TOOL.validate_iso_root(root)
+
     def test_rejects_missing_required_iso_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.make_root(directory)
