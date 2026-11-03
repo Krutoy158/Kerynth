@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kerynth Welcome
+Comment=First steps and desktop settings guide
+Exec=kerynth-welcome
+Icon=help-contents
+Terminal=false
+Categories=System;Settings;
