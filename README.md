@@ -1,5 +1,7 @@
 # AETHER OS
 
+[Русская версия](README.ru.md)
+
 AETHER OS is an independent Linux distribution project. The system is intended to be built from upstream source projects with its own build definitions, package format, installer, and release process. It does not use another distribution's root filesystem or package database.
 
 The project is at an early stage. The repository contains the initial design and the first build-system tools; there is no bootable image yet.
