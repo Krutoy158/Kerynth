@@ -4,15 +4,29 @@ The initramfs builder creates a deterministic gzip-compressed `newc` CPIO archiv
 
 Required staging files:
 - `init`: executable PID 1 handoff script.
-- `bin/busybox`: executable BusyBox binary containing the mount and shell applets.
+- `bin/busybox`: statically linked x86_64 BusyBox binary containing the required mount, shell, device, and session applets.
 - `lib/kerynth-boot-mode`: executable parser for the required `kerynth.mode` kernel argument.
 
-The staging root may also contain kernel modules under `lib/modules/<kernel-release>/` and firmware under `lib/firmware/`. Include only modules and firmware selected for the exact target kernel and hardware profile. Firmware redistribution licenses must be reviewed separately.
-
-Build:
+Build the rootfs and kernel first, then generate the initramfs from the built BusyBox:
 
 ```sh
-python3 tools/kerynth-initramfs --root .kerynth-work/initramfs-root --output .kerynth-work/initramfs.cpio.gz
+make rootfs
+make kernel
+make initramfs
 ```
 
-The builder rejects symlinks, special files, and missing required executables. It does not compile BusyBox, build the kernel, discover hardware, or prove that the image boots. The PID 1 script validates the selected boot mode, mounts the selected root read-only by default, creates a memory-backed `/run`, writes the validated mode to `/run/kerynth/boot-mode`, and hands off to `/sbin/init`. The target init system still needs mode-specific integration, and the Live ISO root-mount path remains to be implemented and tested.
+The generated archive is written below `.kerynth-work/`. It rejects symlinks, special files, and missing required executables.
+
+## ISO boot modes
+
+For `live`, `installer-manual`, and `installer-automatic`, the initramfs expects one `kerynth.media=UUID=...` argument. It resolves only that filesystem UUID, mounts the boot medium read-only, finds `live/rootfs.squashfs`, and mounts that SquashFS image read-only with loop support.
+
+For `installed`, the initramfs expects one `root=` argument supporting a device path, UUID, or LABEL. The installed root is mounted read-only unless `rootflags=rw` is explicitly supplied.
+
+After selecting the root, the script moves `/dev`, `/proc`, and `/sys`, creates a memory-backed `/run`, stores the selected mode in `/run/kerynth/boot-mode`, and hands off to `/sbin/init` using BusyBox `switch_root`. The ISO media mount is preserved below `/run/kerynth-media`.
+
+The target rootfs startup scripts must not remount `/run`: doing so hides the volatile boot-mode marker and the preserved Live media mount.
+
+## Limitations
+
+The initramfs code and its static/unit-test checks are present, but it has not yet been booted with the generated kernel in QEMU. Module loading, firmware staging, storage retry policy, encrypted/LVM/RAID roots, and physical USB/optical boot testing remain open.
