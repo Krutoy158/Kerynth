@@ -64,6 +64,7 @@ class BuildPipelineTests(unittest.TestCase):
             content = path.read_text(encoding="utf-8")
             for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID"):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
+            self.assertIn("# CONFIG_TC is not set", content)
 
     def test_base_root_account_is_locked_by_default(self):
         with tempfile.TemporaryDirectory() as directory:
