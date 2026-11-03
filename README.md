@@ -1,85 +1,59 @@
 # AETHER OS
 
-**AETHER OS** is an independent Linux distribution built from upstream source code. It is not based on Arch Linux, Debian, Ubuntu, Fedora, Gentoo, or another Linux distribution.
+AETHER OS is an independent Linux distribution project. The system is intended to be built from upstream source projects with its own build definitions, package format, installer, and release process. It does not use another distribution's root filesystem or package database.
 
-The project is in its early foundation stage. The repository currently defines the architecture and development direction; it is not yet a bootable operating system.
+The project is at an early stage. The repository contains the initial design and the first build-system tools; there is no bootable image yet.
 
-## Project goals
+## Current state
 
-- Build a minimal x86_64 Linux system from upstream sources in an isolated build environment.
-- Keep the base installation small and avoid installing a graphical desktop by default.
-- Let users choose a desktop environment, service manager, and system components.
-- Provide a native package format, `.aet`, with signed metadata and transactional installation.
-- Provide a carefully constrained Debian package compatibility layer for `.deb` packages.
-- Detect hardware and report missing drivers or firmware clearly.
-- Support common graphics, network, audio, Bluetooth, storage, USB, and laptop devices through the Linux kernel and documented firmware packages.
-- Offer graphical and manual installation paths, including accessibility-focused options.
-- Avoid mandatory telemetry and make local system logging transparent and configurable.
+| Part | State |
+|---|---|
+| Architecture and development notes | Initial draft |
+| Build configuration and source fetcher | First implementation |
+| Kernel, initramfs and boot | Not implemented |
+| Hardware and firmware tooling | Not implemented |
+| Native `.aet` packages | Design draft |
+| Debian `.deb` import | Design draft |
+| Installer and desktop profiles | Planned |
+| ISO image | Not available |
 
-## Important compatibility policy
+## Technical direction
 
-A Debian package is not automatically compatible with AETHER OS. Packages may depend on Debian-specific paths, libraries, maintainer scripts, service managers, or package assumptions. AETHER's `.deb` support will inspect metadata and dependencies, report incompatibilities, and never execute untrusted maintainer scripts as root during conversion.
+- x86_64 first; upstream Linux kernel.
+- musl is the current choice for the initial minimal userspace.
+- No desktop is installed by default. KDE Plasma is one planned optional profile.
+- systemd and OpenRC are being considered as separate installation profiles.
+- The native package format is planned as `.aet`.
+- Debian `.deb` files will be inspected and imported only when their dependencies and behavior can be represented safely. Conversion will not run maintainer scripts.
+- Hardware support will use upstream kernel drivers and separately tracked firmware. Unsupported devices and missing firmware must be reported clearly.
 
-The planned command-line interface is:
+The current build tool verifies source archives against SHA-256 digests before placing them in the local cache. The source lock file is intentionally empty until exact upstream versions and checksums have been reviewed.
+
+## Development
+
+See [the architecture](docs/architecture.md), [the roadmap](docs/roadmap.md), and [the build setup](docs/build-system.md).
+
+Run the build tool checks with Python 3.11 or newer:
 
 ```sh
-sudo aether install package.aet
-aether deb inspect package.deb
-sudo aether reverse -C package.deb
+python3 tools/aether-build check
+python3 -m unittest discover -s tests -v
 ```
 
-An optional `reverse` wrapper may be provided if it does not conflict with an existing system command.
+Downloaded files and build output are kept in the configured workspace. The tool does not install packages or modify the host system.
 
-## Hardware support
+## Hardware notes
 
-AETHER OS uses the upstream Linux kernel driver ecosystem and a separately managed firmware collection. Hardware support depends on the exact device, kernel configuration, firmware availability, and licensing. The installer and diagnostic tools must identify missing firmware and unsupported devices instead of silently claiming support.
+Hardware support depends on the exact device, kernel configuration, firmware availability, and licensing. AETHER OS cannot promise support for every device. The project will publish tested hardware and known limitations as testing becomes available.
 
-No distribution can promise that every device works. AETHER will publish tested hardware and known limitations.
+## Safety
 
-## Initial technical direction
-
-- Architecture: x86_64 first.
-- Kernel: upstream Linux.
-- C library: musl for the initial minimal system.
-- Bootstrap: temporary upstream build tools and BusyBox where useful; not a permanent dependency on another distribution's root filesystem or package database.
-- Filesystem: ext4 initially; Btrfs can be evaluated later.
-- Bootloader: GRUB, installed or modified only after explicit user consent.
-- Init/service profiles: systemd and OpenRC are planned as separate build profiles. Switching a live installation between them will require a controlled migration.
-- Desktop: optional; KDE Plasma is a planned supported desktop profile.
-
-These are initial engineering decisions and may change through documented design proposals.
-
-## Development status
-
-| Component | Status |
-|---|---|
-| Project architecture | Initial draft |
-| Isolated build system | Not implemented |
-| Kernel build and boot | Not implemented |
-| Hardware detection and firmware tooling | Not implemented |
-| Native `.aet` package manager | Not implemented |
-| Debian package compatibility | Not implemented |
-| systemd/OpenRC profiles | Not implemented |
-| Installer | Not implemented |
-| Desktop integration | Not implemented |
-| Bootable ISO | Not implemented |
-
-## Safety and development rules
-
-1. Build artifacts in a dedicated workspace; never modify the developer's host system.
-2. Test boot and installation flows in QEMU before testing physical hardware.
-3. Never run package maintainer scripts as root during `.deb` inspection or conversion.
-4. Verify package signatures and checksums before installation.
-5. Reject archive paths that escape the installation root, including absolute paths and traversal components.
-6. Stage package transactions and provide rollback on failure.
-7. Never overwrite an existing bootloader configuration without explicit consent and a recoverable backup.
-8. Keep third-party licenses and notices intact.
-9. Do not claim a feature works until it has a reproducible test.
-
-## Contributing
-
-Design decisions, implementation notes, test results, and known limitations should be documented in the repository. Small, reviewable changes are preferred over large untested changes.
+- Build in a dedicated workspace, not in the host root filesystem.
+- Verify source checksums before using downloaded archives.
+- Test boot and installation in QEMU before physical hardware.
+- Never overwrite an existing bootloader configuration without explicit consent and a recoverable backup.
+- Preserve the licenses and notices of upstream components.
 
 ## License
 
-Licensing for project-owned code and documentation will be finalized in dedicated license files. Upstream components retain their original licenses; AETHER OS does not relicense the Linux kernel or bundled third-party software.
+Licensing for project-owned code and documentation is being finalized. Upstream components retain their original licenses.
