@@ -24,5 +24,11 @@ jobs:
           sudo apt-get install -y grub-common
       - name: Validate GRUB menu syntax
         run: grub-script-check boot/grub/grub.cfg
+      - name: Build Kerynth Welcome Qt application
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake qt6-base-dev
+          cmake -S desktop/welcome -B .kerynth-welcome-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build .kerynth-welcome-build --parallel 2
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
