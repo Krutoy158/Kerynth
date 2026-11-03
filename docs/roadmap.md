@@ -15,12 +15,15 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M1 — Isolated build infrastructure
 
-- [ ] Build workspace manager with safe path handling.
-- [ ] Source fetcher with checksum/signature verification.
+- [x] Initial build configuration and workspace validation.
+- [x] Source lock parser and HTTPS fetcher with SHA-256 verification.
+- [ ] Signature verification and trusted source key policy.
 - [ ] Pinned build recipes and dependency graph.
 - [ ] Cross-toolchain bootstrap for x86_64.
 - [ ] Staging-root assembly and reproducibility report.
 - [ ] CI tests that never write to the runner's host root.
+
+**Current progress:** configuration validation and checksum-verified source caching are implemented. Compilation, signature verification, and reproducible staging builds remain open.
 
 **Exit criteria:** a minimal userspace can be built twice from pinned sources into isolated staging roots.
 
