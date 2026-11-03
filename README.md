@@ -1,8 +1,8 @@
-# AETHER OS
+# Kerynth OS
 
 [Русская версия](README.ru.md)
 
-AETHER OS is an independent Linux distribution project. The system is intended to be built from upstream source projects with its own build definitions, package format, installer, and release process. It does not use another distribution's root filesystem or package database.
+Kerynth OS is an independent Linux distribution project. The system is intended to be built from upstream source projects with its own build definitions, package format, installer, and release process. It does not use another distribution's root filesystem or package database.
 
 The project is at an early stage. The repository contains the initial design and the first build-system tools; there is no bootable image yet.
 
@@ -14,7 +14,7 @@ The project is at an early stage. The repository contains the initial design and
 | Build configuration and source fetcher | First implementation |
 | Kernel, initramfs and boot | Not implemented |
 | Hardware and firmware tooling | Not implemented |
-| Native `.aet` packages | Design draft |
+| Native `.krt` packages | Design draft |
 | Debian `.deb` import | Design draft |
 | Installer and desktop profiles | Planned |
 | ISO image | Not available |
@@ -25,7 +25,7 @@ The project is at an early stage. The repository contains the initial design and
 - musl is the current choice for the initial minimal userspace.
 - No desktop is installed by default. KDE Plasma is one planned optional profile.
 - systemd and OpenRC are being considered as separate installation profiles.
-- The native package format is planned as `.aet`.
+- The native package format is planned as `.krt`.
 - Debian `.deb` files will be inspected and imported only when their dependencies and behavior can be represented safely. Conversion will not run maintainer scripts.
 - Hardware support will use upstream kernel drivers and separately tracked firmware. Unsupported devices and missing firmware must be reported clearly.
 
@@ -38,7 +38,7 @@ See [the architecture](docs/architecture.md), [the roadmap](docs/roadmap.md), an
 Run the build tool checks with Python 3.11 or newer:
 
 ```sh
-python3 tools/aether-build check
+python3 tools/kerynth-build check
 python3 -m unittest discover -s tests -v
 ```
 
@@ -46,7 +46,7 @@ Downloaded files and build output are kept in the configured workspace. The tool
 
 ## Hardware notes
 
-Hardware support depends on the exact device, kernel configuration, firmware availability, and licensing. AETHER OS cannot promise support for every device. The project will publish tested hardware and known limitations as testing becomes available.
+Hardware support depends on the exact device, kernel configuration, firmware availability, and licensing. Kerynth OS cannot promise support for every device. The project will publish tested hardware and known limitations as testing becomes available.
 
 ## Safety
 
