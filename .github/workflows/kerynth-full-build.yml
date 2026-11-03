@@ -1,0 +1,88 @@
+name: Kerynth full system build
+
+on:
+  push:
+    paths:
+      - ".github/workflows/kerynth-full-build.yml"
+      - "Makefile"
+      - "kerynth.toml"
+      - "sources.lock"
+      - "kernel/**"
+      - "initramfs/**"
+      - "tools/kerynth-build"
+      - "tools/kerynth-build-pipeline"
+      - "tools/kerynth-initramfs"
+      - "tools/kerynth-iso"
+      - "boot/grub/grub.cfg"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
+            perl kmod xz-utils bzip2 gzip zlib1g-dev libzstd-dev \
+            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements-test.txt
+      - name: Validate and test repository
+        run: |
+          make check
+          make test
+          python3 -m py_compile tools/kerynth-build-pipeline
+          grub-script-check boot/grub/grub.cfg
+      - name: Build minimal root filesystem
+        run: make rootfs
+      - name: Verify root filesystem layout
+        run: |
+          test -x .kerynth-work/rootfs/sbin/init
+          test -x .kerynth-work/rootfs/bin/sh
+          test -x .kerynth-work/rootfs/sbin/getty
+          test -x .kerynth-work/rootfs/usr/sbin/kerynth-installer
+          test -f .kerynth-work/rootfs/etc/os-release
+          test -f .kerynth-work/rootfs/etc/inittab
+      - name: Build Linux kernel and modules
+        run: make kernel
+      - name: Build initramfs
+        run: make initramfs
+      - name: Build SquashFS and ISO staging tree
+        run: make iso-stage
+      - name: Validate and package ISO
+        run: |
+          make iso-check
+          make iso
+          file .kerynth-work/kerynth-x86_64.iso
+          sha256sum .kerynth-work/kerynth-x86_64.iso | tee .kerynth-work/kerynth-x86_64.iso.sha256
+      - name: Upload development ISO and build metadata
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kerynth-x86_64-development-iso
+          path: |
+            .kerynth-work/kerynth-x86_64.iso
+            .kerynth-work/kerynth-x86_64.iso.sha256
+            .kerynth-work/kernel/config
+            .kerynth-work/kernel/release
+            .kerynth-work/kernel/System.map
+          if-no-files-found: error
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kerynth-build-failure-diagnostics
+          path: |
+            .kerynth-work/**
+          if-no-files-found: ignore
