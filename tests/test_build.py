@@ -4,11 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from importlib.machinery import SourceFileLoader
+import importlib.util
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD_TOOL = SourceFileLoader("aether_build", str(ROOT / "tools" / "aether-build")).load_module()
+SPEC = importlib.util.spec_from_file_location("aether_build", ROOT / "tools" / "aether-build")
+BUILD_TOOL = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BUILD_TOOL)
 
 
 class BuildToolTests(unittest.TestCase):
@@ -60,7 +62,7 @@ class BuildToolTests(unittest.TestCase):
                 hashlib.sha256(b"AETHER OS").hexdigest(),
             )
 
-    def test_lock_rejects_duplicate_names(self):
+    def test_lock_rejects_duplicate_names_and_filenames(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sources.lock"
             source = {
@@ -71,6 +73,14 @@ class BuildToolTests(unittest.TestCase):
             }
             path.write_text(
                 json.dumps({"version": 1, "sources": [source, source]}),
+                encoding="utf-8",
+            )
+            with self.assertRaises(BUILD_TOOL.BuildError):
+                BUILD_TOOL.load_lock(path)
+
+            second = dict(source, name="linux-source")
+            path.write_text(
+                json.dumps({"version": 1, "sources": [source, second]}),
                 encoding="utf-8",
             )
             with self.assertRaises(BUILD_TOOL.BuildError):
