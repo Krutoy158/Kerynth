@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: check test fetch rootfs kernel initramfs iso-stage install-tree hardware iso-check iso build
+.PHONY: check test fetch rootfs kernel initramfs iso-stage hardware iso-check iso build
 
 check:
 	$(PYTHON) tools/kerynth-build check
@@ -22,9 +22,6 @@ initramfs:
 
 iso-stage:
 	$(PYTHON) tools/kerynth-build-pipeline iso-stage
-
-install-tree:
-	$(PYTHON) tools/kerynth-install-tree --target test-install --mode manual --root-uuid 12345678-1234-1234-1234-123456789abc --username kerynth --password-hash '$6$temporary$replace-this-hash-before-use'
 
 hardware:
 	$(PYTHON) tools/kerynth-hw --json

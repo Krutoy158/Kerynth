@@ -21,7 +21,7 @@ jobs:
       - name: Validate build configuration
         run: python3 tools/kerynth-build check
       - name: Compile build pipeline Python
-        run: python3 -m py_compile tools/kerynth-build-pipeline
+        run: python3 -m py_compile tools/kerynth-build-pipeline tools/kerynth-install-tree
       - name: Install GRUB configuration checker
         run: |
           sudo apt-get update

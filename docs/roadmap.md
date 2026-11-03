@@ -90,14 +90,14 @@ This roadmap distinguishes source code, prototypes, verified builds, and tested 
 
 - [x] Specify beginner-friendly Quick Profile Setup for the first local user account.
 - [ ] Implement local profile validation, password hashing, and safe account creation.
-- [ ] Implement the manual installer workflow.
+- [x] Add a staging-only install-tree builder with first-user, fstab, and installed GRUB configuration generation.\n- [ ] Implement the manual installer workflow.
 - [ ] Implement the automatic installer workflow with explicit disk confirmation.
 - [ ] Add a graphical installer.
 - [ ] Add a hardware compatibility summary.
 - [ ] Add partitioning, filesystem, bootloader backup, and recovery with VM safety tests.
 - [ ] Add accessibility options and keyboard navigation.
 
-**Current state:** installer menu entries dispatch to a no-write placeholder. No partitions or filesystems are created and no disk contents are changed.
+**Current state:** a tested staging helper prepares an installed root tree only below `.kerynth-work/targets/`. It does not partition, format, mount, or modify block devices, and it does not install a bootloader. The ISO menu still dispatches to a no-write placeholder; a real interactive installer remains open.
 
 ## M8 — Optional desktop
 
