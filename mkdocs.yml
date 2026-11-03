@@ -1,0 +1,56 @@
+site_name: Kerynth Wiki
+site_description: Documentation for the Kerynth Linux distribution
+site_url: https://krutoy158.github.io/Kerynth/
+repo_url: https://github.com/Krutoy158/Kerynth
+repo_name: Krutoy158/Kerynth
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Project:
+      - Architecture: architecture.md
+      - Build system: build-system.md
+      - Development roadmap: roadmap.md
+  - Packaging:
+      - .ker format: packaging-format.md
+  - Hardware:
+      - Support policy: hardware.md
+  - Contributing: contributing.md
