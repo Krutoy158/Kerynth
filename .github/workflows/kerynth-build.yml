@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Python test dependencies
+        run: python3 -m pip install -r requirements-test.txt
       - name: Validate build configuration
         run: python3 tools/kerynth-build check
       - name: Compile build pipeline Python
