@@ -21,7 +21,7 @@ SPEC.loader.exec_module(BUILD)
 MAX_MEMBERS=250000
 MAX_EXTRACTED_SIZE=8*1024*1024*1024
 BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","login","blkid","mdev","reboot","poweroff","su","chown","chmod","find","mkdir","cat","sleep","echo","test","printf","hostname","sync")
-KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_BLK_DEV_LOOP=y")
+KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_SQUASHFS_XZ=y","CONFIG_BLK_DEV_LOOP=y","CONFIG_SCSI=y","CONFIG_BLK_DEV_SR=y","CONFIG_ISO9660_FS=y","CONFIG_USB_STORAGE=y","CONFIG_USB_UAS=y","CONFIG_SERIAL_8250_CONSOLE=y")
 
 class PipelineError(Exception):
     pass
@@ -296,6 +296,14 @@ def build_kernel(work,jobs=4):
     run(["make","O="+str(build_dir),"-j{}".format(jobs),"bzImage","modules"],cwd=source,env=environment())
     run(["make","O="+str(build_dir),"INSTALL_MOD_PATH="+str(rootfs),"modules_install"],cwd=source,env=environment())
     release=run(["make","O="+str(build_dir),"kernelrelease"],cwd=source,env=environment(),capture=True).stdout.decode("utf-8","replace").strip()
+    modules_directory=rootfs/"lib/modules"/release
+    if not modules_directory.is_dir():
+        fail("kernel modules were not installed into the Kerynth rootfs")
+    for link_name in ("build","source"):
+        link=modules_directory/link_name
+        if link.is_symlink():
+            link.unlink()
+
     image=build_dir/"arch/x86/boot/bzImage"
     if not image.is_file() or image.stat().st_size<1024*1024:
         fail("kernel build did not produce a valid-sized bzImage")
