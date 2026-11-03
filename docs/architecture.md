@@ -122,6 +122,10 @@ Every testable Kerynth ISO must offer a Live mode that boots without installing 
 
 The boot menu must distinguish **Live Kerynth** from **Install Kerynth**. CI must boot the ISO in QEMU, verify that Live mode reaches a usable state, and publish the ISO, SHA-256 checksum, and boot logs as workflow artifacts. No ISO should be presented as usable before these checks pass.
 
-## 11. Desktop
+## 12. First-run Welcome Guide
+
+The optional graphical desktop profile includes Kerynth Welcome, a beginner-friendly guide that starts after the graphical session is ready in both Live and installed sessions. It provides local first-step help for network settings, updates, hardware/drivers, appearance, applications, backups/recovery, and documentation. It must show unavailable features honestly and may only launch existing system tools after an explicit user action. The startup preference is persistent per user in installed systems and volatile in Live sessions, so it never causes an implicit write to the Live medium or internal disks. The guide remains manually available from the application menu after automatic startup is disabled. See `docs/kerynth-welcome.md`.
+
+## 13. Desktop
 
 A desktop is optional. KDE Plasma is a planned profile, not part of the minimal base system. The desktop profile will define its display manager, session, audio stack, network integration, portals, and hardware integration as a tested set.

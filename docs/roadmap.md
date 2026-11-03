@@ -111,6 +111,11 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M8 — Optional desktop
 
+- [x] Specify the Kerynth Welcome first-run guide for Live and installed sessions.
+- [x] Implement a local per-user startup preference helper with separate persistent and volatile scopes.
+- [ ] Build the graphical Kerynth Welcome application and its first-step pages.
+- [ ] Add graphical-session autostart and an application-menu launcher.
+- [ ] Integrate the guide with available settings, update, driver, app, backup, and help tools.
 - [ ] KDE Plasma profile.
 - [ ] Display manager and session integration.
 - [ ] Network, audio, Bluetooth, portals, and power management.
