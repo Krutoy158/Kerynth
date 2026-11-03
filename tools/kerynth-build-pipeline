@@ -89,6 +89,10 @@ def fetch_extract(name,work):
         fail("source is not pinned in sources.lock: "+name)
     source=entries[name]
     archive,_=BUILD.fetch_source(source,work)
+    return extract_source(source,archive,work)
+
+def extract_source(source,archive,work):
+    name=source["name"]
     parent=work/"sources-unpacked"
     parent.mkdir(parents=True,exist_ok=True)
     destination=parent/name
