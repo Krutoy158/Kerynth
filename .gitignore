@@ -1,0 +1,14 @@
+/build/
+/out/
+/staging/
+/sysroot/
+/toolchain/
+/downloads/
+/.cache/
+*.img
+*.iso
+*.qcow2
+*.raw
+*.log
+*.tmp
+compile_commands.json
