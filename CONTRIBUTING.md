@@ -1,6 +1,6 @@
-# Contributing to Kerynth OS
+# Contributing to Kerynth
 
-Kerynth OS is an early-stage independent Linux distribution. Contributions should be small, testable, and documented.
+Kerynth is an early-stage independent Linux distribution. Contributions should be small, testable, and documented.
 
 ## Engineering rules
 
