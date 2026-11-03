@@ -118,7 +118,8 @@ class IsoBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.iso"
             with path.open("wb") as stream:
-                stream.truncate(16 * 2048)
+                stream.truncate(16 * 2048 + 7)
+                stream.seek(16 * 2048)
                 stream.write(b"\x01CD001\x01")
             self.assertTrue(ISO_TOOL.has_iso9660_signature(path))
 
