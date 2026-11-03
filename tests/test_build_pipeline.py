@@ -70,7 +70,8 @@ class BuildPipelineTests(unittest.TestCase):
             root = Path(directory)
             PIPELINE.write_base(root, False)
             self.assertIn("root:!", (root / "etc/shadow").read_text(encoding="utf-8"))
-            self.assertIn("/sbin/getty", (root / "etc/inittab").read_text(encoding="utf-8"))
+            self.assertIn("/etc/init.d/kerynth-session", (root / "etc/inittab").read_text(encoding="utf-8"))
+            self.assertIn("/sbin/getty", (root / "etc/init.d/kerynth-session").read_text(encoding="utf-8"))
 
     def test_developer_shell_requires_explicit_flag(self):
         with tempfile.TemporaryDirectory() as directory:
