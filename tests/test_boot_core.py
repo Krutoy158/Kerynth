@@ -22,6 +22,7 @@ class BootCoreTests(unittest.TestCase):
         required = [
             ROOT / "initramfs" / "init",
             ROOT / "initramfs" / "busybox.config.fragment",
+            ROOT / "initramfs" / "kerynth-boot-mode",
             ROOT / "kernel" / "kerynth-x86_64.fragment",
             ROOT / "docs" / "boot-core.md",
         ]
@@ -91,6 +92,64 @@ class BootMenuTests(unittest.TestCase):
                 self.assertIsNotNone(match)
                 self.assertIn(mode, match.group(1))
                 self.assertIn("initrd /boot/initramfs.cpio.gz", match.group(1))
+
+
+class BootModeParserTests(unittest.TestCase):
+    def setUp(self):
+        self.shell = shutil.which("sh")
+        self.parser = ROOT / "initramfs" / "kerynth-boot-mode"
+
+    def run_parser(self, cmdline):
+        return subprocess.run(
+            [self.shell, str(self.parser), cmdline],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_parser_has_valid_shell_syntax(self):
+        result = subprocess.run(
+            [self.shell, "-n", str(self.parser)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_parser_accepts_all_three_boot_modes(self):
+        modes = (
+            "installer-manual",
+            "installer-automatic",
+            "live",
+        )
+        for mode in modes:
+            with self.subTest(mode=mode):
+                result = self.run_parser(f"quiet root=UUID=abc kerynth.mode={mode}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f"{mode}\\n")
+
+    def test_parser_rejects_missing_unknown_and_duplicate_modes(self):
+        invalid_cmdlines = (
+            "quiet root=/dev/sda1",
+            "kerynth.mode=desktop",
+            "kerynth.mode=live kerynth.mode=live",
+            "kerynth.mode=live kerynth.mode=installer-manual",
+        )
+        for cmdline in invalid_cmdlines:
+            with self.subTest(cmdline=cmdline):
+                result = self.run_parser(cmdline)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_parser_rejects_shell_metacharacters_in_mode(self):
+        result = self.run_parser("kerynth.mode=live;touch /tmp/kerynth-mode-test")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_init_publishes_mode_only_under_volatile_run(self):
+        content = (ROOT / "initramfs" / "init").read_text(encoding="utf-8")
+        self.assertIn('/lib/kerynth-boot-mode "$CMDLINE"', content)
+        self.assertIn('mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /newroot/run', content)
+        self.assertIn('/newroot/run/kerynth/boot-mode', content)
+
 
 
 if __name__ == "__main__":
