@@ -51,6 +51,8 @@ This roadmap separates design work from implemented and tested functionality. A 
 ## M4 — Native package management
 
 - [ ] Specify and version the .ker archive format.
+- [ ] Define the sudo-based install boundary: verify and plan as the user; apply only the validated system-file changes with explicit administrative authorization.
+- [ ] Define package ownership, conflict handling, rollback, and strict separation from user home directories.
 - [ ] Implement metadata parser and package verifier.
 - [ ] Implement repository metadata and signature verification.
 - [ ] Implement safe extraction and path validation.
