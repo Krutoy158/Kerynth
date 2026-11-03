@@ -105,7 +105,7 @@ The system must follow these rules:
 - Create and use an unprivileged user account for normal work. Do not require routine root login.
 - Do not launch desktop applications, browsers, development tools, or package build jobs as root.
 - Administrative actions must be explicit, narrowly scoped, and explain what will change before authorization.
-- Use a dedicated privilege broker with policy checks for graphical administration; do not give desktop applications unrestricted root access.
+- Use the standard sudo-style privilege model for explicit administrative operations. Kerynth must not silently elevate, launch a persistent root session, or require a separate privilege broker for the initial system.
 - Never silently elevate a process, modify user files as root, or change user-owned settings without consent.
 - Keep user data and configuration separate from system-owned files. Package installation must not overwrite user data without an explicit decision.
 - Root access remains technically powerful, so security boundaries, audit logs, and recovery procedures must assume that privileged code can affect the whole system.
