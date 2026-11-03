@@ -60,7 +60,7 @@ class BuildPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".config"
             path.write_text("# CONFIG_STATIC is not set\n# CONFIG_INIT is not set\n", encoding="utf-8")
-            PIPELINE.set_busybox_config(path)
+            PIPELINE.set_busybox_config(path, ROOT / "initramfs" / "busybox.config.fragment")
             content = path.read_text(encoding="utf-8")
             for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID"):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
