@@ -39,7 +39,9 @@ class BootCoreTests(unittest.TestCase):
     def test_live_mounts_explicit_iso_uuid_and_squashfs_read_only(self):
         content = (ROOT / 'initramfs' / 'init').read_text(encoding='utf-8')
         self.assertIn('kerynth.media=*', content)
-        self.assertIn('mount -o ro "$MEDIA_DEVICE" /media', content)
+        self.assertIn('mount -t "$MEDIA_FSTYPE" -o ro "$MEDIA_DEVICE" /media', content)
+        self.assertIn('MEDIA_FSTYPE="$($BB blkid -s TYPE -o value "$MEDIA_DEVICE" 2>/dev/null)"', content)
+        self.assertIn('iso9660) ;;', content)
         self.assertIn('mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /newroot', content)
         self.assertIn('mount --move /media /newroot/run/kerynth-media', content)
 
