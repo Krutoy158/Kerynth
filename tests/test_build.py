@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import importlib.util
@@ -118,6 +119,54 @@ class BuildToolTests(unittest.TestCase):
             )
             with self.assertRaises(BUILD_TOOL.BuildError):
                 BUILD_TOOL.load_lock(path)
+
+    def test_source_mirrors_must_use_https(self):
+        source = {
+            "name": "linux",
+            "url": "https://example.invalid/linux.tar.xz",
+            "mirrors": ["http://mirror.invalid/linux.tar.xz"],
+            "filename": "linux.tar.xz",
+            "sha256": "a" * 64,
+        }
+        with self.assertRaises(BUILD_TOOL.BuildError):
+            BUILD_TOOL.validate_source(source)
+
+    def test_fetch_uses_locked_mirror_after_primary_timeout(self):
+        original_payload = b"Kerynth source archive"
+        remaining = [original_payload]
+        digest = hashlib.sha256(original_payload).hexdigest()
+        source = {
+            "name": "sample",
+            "url": "https://primary.invalid/sample.tar.gz",
+            "mirrors": ["https://mirror.invalid/sample.tar.gz"],
+            "filename": "sample.tar.gz",
+            "sha256": digest,
+        }
+
+        class Response:
+            headers = {"Content-Length": str(len(original_payload))}
+
+            def geturl(self):
+                return "https://mirror.invalid/sample.tar.gz"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size=-1):
+                chunk = remaining[0][:size]
+                remaining[0] = remaining[0][size:]
+                return chunk
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(BUILD_TOOL.urllib.request, "urlopen", side_effect=[TimeoutError("primary timeout"), Response()]) as opener:
+                with patch.object(BUILD_TOOL.time, "sleep"):
+                    path, downloaded = BUILD_TOOL.fetch_source(source, Path(directory) / "work")
+            self.assertTrue(downloaded)
+            self.assertEqual(path.read_bytes(), original_payload)
+            self.assertEqual(opener.call_count, 2)
 
     def test_fetch_rejects_cache_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
