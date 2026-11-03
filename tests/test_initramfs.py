@@ -22,6 +22,10 @@ class InitramfsTests(unittest.TestCase):
         (root / "init").chmod(0o755)
         (root / "bin" / "busybox").write_bytes(b"busybox-test")
         (root / "bin" / "busybox").chmod(0o755)
+        (root / "lib").mkdir()
+        parser = root / "lib" / "kerynth-boot-mode"
+        parser.write_text("#!/bin/busybox sh\\nexit 0\\n", encoding="utf-8")
+        parser.chmod(0o755)
 
     def test_builds_deterministic_gzip_newc_archive(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -36,6 +40,16 @@ class InitramfsTests(unittest.TestCase):
             archive = gzip.decompress(output_a.read_bytes())
             self.assertTrue(archive.startswith(b"070701"))
             self.assertIn(b"TRAILER!!!\0", archive)
+
+
+    def test_rejects_missing_boot_mode_parser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            root.mkdir()
+            self.make_root(root)
+            (root / "lib" / "kerynth-boot-mode").unlink()
+            with self.assertRaises(BUILDER.InitramfsError):
+                BUILDER.collect(root)
 
     def test_rejects_missing_init(self):
         with tempfile.TemporaryDirectory() as directory:
