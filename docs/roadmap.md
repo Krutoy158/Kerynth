@@ -1,89 +1,82 @@
 # Development Roadmap
 
-This roadmap separates design work from implemented and tested functionality. A milestone is not complete until its acceptance criteria are met.
+This roadmap distinguishes source code, prototypes, verified builds, and tested boot behavior. A source file or a passing unit test does not mark a bootable operating system complete.
 
 ## M0 — Foundation
 
 - [x] Establish project identity and initial architecture.
 - [x] Record driver and firmware strategy.
 - [x] Record native package and Debian compatibility requirements.
-- [ ] Select and publish project code and documentation licenses.
 - [x] Define a user-first privilege model based on explicit sudo authorization.
+- [x] Pin initial Linux, musl, and BusyBox source archives with SHA-256 digests.
+- [ ] Select and publish project code and documentation licenses.
 - [ ] Add contribution and security reporting policies.
-- [ ] Define supported source pinning and reproducible build metadata.
-
-**Exit criteria:** repository policy and architecture are reviewed and stable enough to implement.
+- [ ] Add upstream detached-signature verification and a trusted publisher-key policy.
 
 ## M1 — Isolated build infrastructure
 
-- [x] Initial build configuration and workspace validation.
-- [x] Source lock parser and HTTPS fetcher with SHA-256 verification.
-- [ ] Signature verification and trusted source key policy.
-- [ ] Pinned build recipes and dependency graph.
-- [ ] Cross-toolchain bootstrap for x86_64.
-- [ ] Staging-root assembly and reproducibility report.
-- [ ] CI tests that never write to the runner's host root.
+- [x] Validate configuration and source-lock metadata.
+- [x] Fetch pinned source archives over HTTPS and check SHA-256.
+- [x] Extract source archives with path, link, entry-type, duplicate, and expansion-size checks.
+- [x] Add isolated build orchestration for musl, static BusyBox, Linux, initramfs, SquashFS, and ISO packaging.
+- [x] Add Makefile targets for each build stage.
+- [ ] Run a complete source build on a supported build host.
+- [ ] Build twice from clean workspaces and compare outputs.
+- [ ] Add a sandbox for source build steps and a reviewed dependency graph.
+- [ ] Publish reproducible build metadata.
 
-**Current progress:** configuration validation and checksum-verified source caching are implemented. Compilation, signature verification, and reproducible staging builds remain open.
-
-**Exit criteria:** a minimal userspace can be built twice from pinned sources into isolated staging roots.
+**Current state:** the pipeline and pinned inputs are in the repository and its Python/unit-test checks run in CI. A complete musl/BusyBox/kernel/ISO build has not yet been performed successfully, so the minimal userspace build and reproducibility criteria are still open.
 
 ## M2 — Bootable core
 
-- [ ] Build upstream Linux kernel from pinned source using the reviewed x86_64 configuration fragment.
-- [x] Add deterministic `newc` CPIO + gzip initramfs archive builder and initial PID 1 handoff stub.
-- [x] Add initial root device, UUID, and LABEL discovery plus switch-root handoff script (QEMU validation still required).
-- [x] Validate the selected installer/Live boot mode and expose it through a volatile `/run/kerynth/boot-mode` marker.
-- [ ] Generate initramfs from the selected kernel modules and firmware set.
-- [ ] Complete PID 1 behavior and test it under QEMU.
-- [ ] Provide console login and clean shutdown/reboot.
-- [ ] Boot in QEMU using a virtual disk.
-- [ ] Add a non-installing Live boot mode with temporary runtime storage.
-- [ ] Verify Live mode does not write to internal disks or alter boot entries.
-- [ ] Publish boot logs and test configuration.
+- [x] Add deterministic `newc` CPIO + gzip initramfs generation.
+- [x] Add boot-mode parsing and a volatile `/run/kerynth/boot-mode` marker.
+- [x] Add root device, UUID, and LABEL discovery for installed-mode boot.
+- [x] Add ISO media UUID handoff from GRUB.
+- [x] Add read-only ISO media and SquashFS mount logic for Live and installer modes.
+- [x] Add a console session dispatcher and an unprivileged Live account to the rootfs generator.
+- [ ] Build the configured Linux kernel from the pinned source.
+- [ ] Generate and verify the boot initramfs from actual built artifacts.
+- [ ] Boot in QEMU to a usable console login.
+- [ ] Verify Live mode does not write to internal disks or installed boot entries.
+- [ ] Verify clean shutdown/reboot and publish QEMU logs.
 
-**Exit criteria:** QEMU reaches a usable console login and shuts down cleanly.
+**Current state:** the boot scripts, GRUB handoff, and rootfs session definitions are implemented and covered by static/unit tests. The kernel and rootfs have not yet been built together or boot-tested; the Live path remains unverified end-to-end.
 
 ## M3 — Hardware enablement
 
-- [ ] Kernel configuration for common storage, USB, input, graphics, network, and audio devices.
-- [ ] Test PCI/USB discovery against fixture sysfs trees and representative QEMU devices.
-- [ ] Firmware package inventory and license review.
 - [x] Add read-only PCI/USB hardware inventory prototype (`tools/kerynth-hw`).
-- [ ] Match modaliases against modules built for the exact kernel release.
-- [ ] Build a reviewed firmware catalog with redistribution-license metadata.
+- [x] Add initial built-in kernel configuration for virtio, SATA/AHCI, USB storage, optical media, ISO9660, SquashFS, and serial console.
+- [ ] Complete the kernel configuration for common storage, input, graphics, network, and audio devices.
+- [ ] Match hardware modaliases against modules built for the exact kernel release.
+- [ ] Build a reviewed firmware catalogue with redistribution-license metadata.
 - [ ] Include baseline storage/network drivers and an offline driver path in the ISO.
-- [ ] Hardware-aware installer driver-bundle preview and user confirmation.
-- [ ] Driver and firmware diagnostic command.
-- [ ] Test matrix for selected physical devices and QEMU devices.
-
-**Exit criteria:** tested devices are documented; missing firmware and unsupported hardware are clearly reported.
+- [ ] Add hardware compatibility tests for QEMU and selected physical systems.
 
 ## M4 — Native package management
 
-- [ ] Specify and version the .ker archive format.
-- [ ] Define the sudo-based install boundary: verify and plan as the user; apply only the validated system-file changes with explicit administrative authorization.
-- [ ] Define package ownership, conflict handling, rollback, and strict separation from user home directories.
-- [ ] Implement metadata parser and package verifier.
-- [ ] Implement repository metadata and signature verification.
-- [ ] Implement safe extraction and path validation.
-- [ ] Implement dependency/conflict solver.
-- [ ] Implement staged installation, rollback, and package database.
-- [ ] Add adversarial archive tests.
+- [x] Specify experimental `.ker` format version 1.
+- [x] Implement canonical manifest parsing and Ed25519 package verification.
+- [x] Implement signed package creation with SHA-256 payload binding.
+- [x] Implement safe payload path and file-type validation.
+- [x] Implement package install/remove/list against disposable staging roots only.
+- [x] Record package ownership and installed file hashes.
+- [x] Add exact-version dependency checks, conflict checks, and protection against removing modified files or required dependencies.
+- [ ] Add upgrade/downgrade transactions and repository metadata.
+- [ ] Add key rotation/revocation and signed repository indexes.
+- [ ] Integrate the package manager into the Kerynth userspace with explicit sudo authorization.
+- [ ] Add adversarial archive tests beyond the initial unit-test suite.
 
-**Exit criteria:** signed packages can be installed and removed safely in a disposable test root.
+**Current state:** package operations are a tested development prototype restricted to `.kerynth-work/targets/`. They cannot install into the host system or a live Kerynth installation. The Python tool is not yet part of the minimal OS image.
 
 ## M5 — Debian compatibility
 
-- [ ] Inspect .deb ar containers and control/data archives without extracting to the host.
+- [ ] Inspect `.deb` ar containers and control/data archives without extracting to the host.
 - [ ] Parse Debian control metadata.
 - [ ] Map supported dependency expressions.
 - [ ] Report unsupported maintainer scripts, triggers, dependencies, and paths.
-- [ ] Implement non-executing conversion preview.
-- [ ] Add explicit conversion command and tests.
+- [ ] Implement a non-executing conversion preview and explicit conversion command.
 - [ ] Keep direct installation of arbitrary `.deb` files disabled until compatibility and safety are proven.
-
-**Exit criteria:** compatible test packages convert reproducibly; incompatible packages fail safely with a useful report.
 
 ## M6 — Service profiles
 
@@ -93,47 +86,42 @@ This roadmap separates design work from implemented and tested functionality. A 
 - [ ] Add profile-specific CI boot tests.
 - [ ] Design controlled migration and recovery.
 
-**Exit criteria:** each profile independently boots and starts required services in QEMU.
-
 ## M7 — Installer and accessibility
 
 - [x] Specify beginner-friendly Quick Profile Setup for the first local user account.
-- [ ] Implement local profile validation, username suggestion, and safe account creation.
-- [ ] Manual installation documentation and tooling.
-- [ ] Graphical installer.
-- [ ] Hardware compatibility summary.
-- [ ] Explicit disk/partition confirmation.
-- [ ] GRUB install/update opt-in with backup and recovery.
-- [ ] High contrast, scalable text, keyboard navigation, and visual status messages.
-- [ ] Accessibility manual setup.
+- [ ] Implement local profile validation, password hashing, and safe account creation.
+- [ ] Implement the manual installer workflow.
+- [ ] Implement the automatic installer workflow with explicit disk confirmation.
+- [ ] Add a graphical installer.
+- [ ] Add a hardware compatibility summary.
+- [ ] Add partitioning, filesystem, bootloader backup, and recovery with VM safety tests.
+- [ ] Add accessibility options and keyboard navigation.
 
-**Exit criteria:** installation and recovery paths pass destructive-operation safety tests in virtual machines.
+**Current state:** installer menu entries dispatch to a no-write placeholder. No partitions or filesystems are created and no disk contents are changed.
 
 ## M8 — Optional desktop
 
 - [x] Specify the Kerynth Welcome first-run guide for Live and installed sessions.
-- [x] Implement a local per-user startup preference helper with separate persistent and volatile scopes.
-- [x] Add a session-aware startup dispatcher and XDG autostart desktop-entry template.
-- [x] Add a Qt 6 graphical Kerynth Welcome prototype with first-step pages and optional tool launchers (desktop-session integration remains open).
-- [ ] Add graphical-session autostart and an application-menu launcher.
-- [ ] Integrate the guide with available settings, update, driver, app, backup, and help tools.
-- [ ] KDE Plasma profile.
-- [ ] Display manager and session integration.
-- [ ] Network, audio, Bluetooth, portals, and power management.
-- [ ] Optional Glass theme.
+- [x] Implement the local per-user startup preference helper and session dispatcher.
+- [x] Add the Qt 6 graphical Welcome prototype and application launcher.
+- [ ] Add graphical-session autostart and integrate it in the desktop profile.
+- [ ] Build and package KDE Plasma and its runtime dependencies.
+- [ ] Add display manager, session, network, audio, Bluetooth, portals, and power management.
+- [ ] Add the Kerynth Glass theme and branded wallpaper/logo assets.
 - [ ] Test with software rendering and supported GPU drivers.
-
-**Exit criteria:** optional desktop starts from a clean installation without being required by the base system.
 
 ## M9 — ISO and releases
 
-- [x] Add a workspace-only ISO staging validator and `grub-mkrescue` packaging prototype (bootability still unverified).
-- [ ] Reproducible ISO generation from the tested staging root.
-- [x] Specify the English boot menu: KER logo, **Manual Installation**, **Automatic Installation**, and **Live System**.
-- [x] Add a minimal GRUB menu prototype with distinct installer/live kernel modes and no automatic timeout (GRUB/ISO integration and QEMU validation remain open).
-- [ ] Live mode with no automatic internal-disk writes or installation.
-- [ ] QEMU tests for Live boot, shutdown, and installer safety.
-- [ ] Publish the ISO, SHA-256 checksum, and boot logs as GitHub Actions artifacts.
-- [ ] Signed release checksums and release workflow.
+- [x] Add a workspace-only ISO staging validator and GRUB ISO packager.
+- [x] Add the KER-only boot menu with Manual Installation, Automatic Installation, and Live System.
+- [x] Add no-timeout menu behavior and distinct boot modes.
+- [x] Add the initial media UUID and read-only SquashFS handoff code.
+- [ ] Build the ISO from the generated kernel and rootfs.
+- [ ] Verify BIOS and UEFI boot in QEMU.
+- [ ] Verify Live boot, shutdown, and installer no-write behavior.
+- [ ] Publish a tested ISO, SHA-256 checksum, and boot logs.
+- [ ] Add signed release checksums and release workflow.
 
-**Exit criteria:** the ISO boots in QEMU, Live mode reaches a usable session without installing, and the installer requires explicit user action.
+## Release gate
+
+Kerynth is not ready to be called a usable distribution until a generated ISO boots in QEMU, reaches a working Live console/session, preserves internal disks in Live mode, and its manual installation path passes destructive-operation safety tests in disposable virtual machines.
