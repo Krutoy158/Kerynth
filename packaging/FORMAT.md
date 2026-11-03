@@ -1,4 +1,4 @@
-# AETHER Package Format (.aet)
+# KERYNTH Package Format (.krt)
 
 **Status:** design draft; no stable binary format or installer is implemented yet.
 
@@ -55,15 +55,15 @@ Package installation scripts are not part of the initial format. System integrat
 
 Debian packages are imported, not blindly relabeled. The importer must parse the ar container, control archive, data archive, control fields, dependencies, conffiles, scripts, and triggers as data.
 
-Maintainer scripts and triggers must never be executed during inspection or conversion. Unsupported behavior must be reported. The importer may produce an .aet package only when all required semantics are safely representable.
+Maintainer scripts and triggers must never be executed during inspection or conversion. Unsupported behavior must be reported. The importer may produce an .krt package only when all required semantics are safely representable.
 
 ## CLI direction
 
 ```sh
-aether package verify file.aet
-aether install file.aet
-aether deb inspect file.deb
-aether reverse -C file.deb
+kerynth package verify file.krt
+kerynth install file.krt
+kerynth deb inspect file.deb
+kerynth reverse -C file.deb
 ```
 
-The `reverse` command is a compatibility alias only if it does not shadow an existing command. The canonical interface remains under `aether`.
+The `reverse` command is a compatibility alias only if it does not shadow an existing command. The canonical interface remains under `kerynth`.
