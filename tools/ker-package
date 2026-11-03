@@ -110,9 +110,26 @@ def private_key(path):
     if not isinstance(key,Ed25519PrivateKey): fail("private key must be Ed25519")
     return key
 
+def parse_relations(values):
+    result = []
+    for value in values:
+        parts = value.split("=", 1)
+        name = parts[0]
+        if not NAME.fullmatch(name):
+            fail("invalid package relation: " + value)
+        entry = {"name": name}
+        if len(parts) == 2:
+            if not VERSION.fullmatch(parts[1]):
+                fail("invalid package relation version: " + value)
+            entry["version"] = parts[1]
+        result.append(entry)
+    if len({item["name"] for item in result}) != len(result):
+        fail("duplicate package relation")
+    return result
+
 def build(args):
     payload=make_payload(args.payload_dir); digest=hashlib.sha256(payload).digest()
-    manifest={"format_version":1,"name":args.name,"version":args.version,"architecture":args.architecture,"description":args.description,"dependencies":[],"conflicts":[],"payload_sha256":digest.hex(),"signing_key_id":args.key_id}
+    manifest={"format_version":1,"name":args.name,"version":args.version,"architecture":args.architecture,"description":args.description,"dependencies":parse_relations(args.depends),"conflicts":parse_relations(args.conflicts),"payload_sha256":digest.hex(),"signing_key_id":args.key_id}
     raw=canonical(manifest); parse_manifest(raw)
     signature=private_key(args.private_key).sign(DOMAIN+raw+digest)
     output=Path(args.output); output.parent.mkdir(parents=True,exist_ok=True); temporary=output.with_name(output.name+".tmp")
@@ -380,7 +397,7 @@ def remove(args):
         for dependency in other.get("dependencies", []):
             if dependency["name"] == name:
                 dependents.append(other_name)
-    if dependents and not args.force:
+    if dependents:
         fail("package is required by installed packages: " + ", ".join(sorted(dependents)))
     files = record.get("files")
     directories = record.get("directories")
@@ -419,10 +436,10 @@ def list_installed(args):
 
 def main(argv=None):
     parser=argparse.ArgumentParser(prog="ker-package"); commands=parser.add_subparsers(dest="command",required=True)
-    b=commands.add_parser("build"); b.add_argument("--payload-dir",required=True); b.add_argument("--name",required=True); b.add_argument("--version",required=True); b.add_argument("--architecture",choices=("x86_64","noarch"),default="x86_64"); b.add_argument("--description",required=True); b.add_argument("--key-id",required=True); b.add_argument("--private-key",required=True); b.add_argument("--output",required=True); b.set_defaults(handler=build)
+    b=commands.add_parser("build"); b.add_argument("--payload-dir",required=True); b.add_argument("--name",required=True); b.add_argument("--version",required=True); b.add_argument("--architecture",choices=("x86_64","noarch"),default="x86_64"); b.add_argument("--description",required=True); b.add_argument("--key-id",required=True); b.add_argument("--private-key",required=True); b.add_argument("--depends",action="append",default=[]); b.add_argument("--conflicts",action="append",default=[]); b.add_argument("--output",required=True); b.set_defaults(handler=build)
     v=commands.add_parser("verify"); v.add_argument("package"); v.add_argument("--keyring",required=True); v.set_defaults(handler=verify)
     i=commands.add_parser("install"); i.add_argument("package"); i.add_argument("--keyring",required=True); i.add_argument("--root",required=True); i.set_defaults(handler=install)
-    r=commands.add_parser("remove"); r.add_argument("name"); r.add_argument("--root",required=True); r.add_argument("--force",action="store_true"); r.set_defaults(handler=remove)
+    r=commands.add_parser("remove"); r.add_argument("name"); r.add_argument("--root",required=True); r.set_defaults(handler=remove)
     l=commands.add_parser("list"); l.add_argument("--root",required=True); l.set_defaults(handler=list_installed)
     args=parser.parse_args(argv)
     try: args.handler(args); return 0
