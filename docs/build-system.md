@@ -1,74 +1,116 @@
 # Build System
 
-The first build tool is a small Python command-line program. It currently validates the build configuration and source lock file, then downloads locked source archives into a local cache after checking their SHA-256 digest.
-
-It does not compile the kernel or install anything on the host yet.
+Kerynth builds into the project-local `.kerynth-work/` directory. The build pipeline does not invoke sudo, write to the host root, partition disks, or modify boot entries.
 
 ## Requirements
 
+- x86_64 Linux build host
 - Python 3.11 or newer
-- Network access for fetching source archives
-- HTTPS source URLs
-- A SHA-256 digest obtained from a trusted upstream release source
+- GCC, GNU Make, binutils
+- bc, bison, flex, OpenSSL development headers, Perl
+- xz, bzip2, gzip
+- squashfs-tools (`mksquashfs`)
+- GRUB BIOS/EFI utilities and xorriso for ISO creation
+- Network access for the pinned upstream source archives
 
-## Configuration
+The repository CI checks Python syntax, configuration, GRUB syntax, Qt Welcome compilation, and unit tests. It does not currently perform the full Linux/musl source build.
 
-The build configuration is stored in `kerynth.toml`:
+## Pinned sources
 
-```toml
-[build]
-architecture = "x86_64"
-workspace = ".kerynth-work"
-```
+The version and SHA-256 of every build input are stored in `sources.lock`:
 
-The workspace must remain inside the project directory. Downloaded archives are stored under `.kerynth-work/sources/`.
+- Linux 6.6.161
+- musl 1.2.6
+- BusyBox 1.38.0
 
-## Source lock file
+The fetcher accepts HTTPS sources only, enforces size limits, checks SHA-256, and uses temporary files followed by atomic replacement. The pipeline extracts each archive into a separate workspace directory after validating paths, entry types, symlink targets, duplicate paths, and total expanded size.
 
-Each entry in `sources.lock` has a unique name, an HTTPS URL, a local filename, and a lowercase SHA-256 digest.
+SHA-256 verifies that the downloaded bytes match the repository lock file. Upstream detached-signature verification and a reviewed publisher-key policy are still open work.
 
-```json
-{
-  "version": 1,
-  "sources": [
-    {
-      "name": "example-source",
-      "url": "https://example.org/example-source.tar.xz",
-      "filename": "example-source.tar.xz",
-      "sha256": "replace-with-a-reviewed-64-character-sha256-digest"
-    }
-  ]
-}
-```
+## Build commands
 
-The example digest is deliberately not a valid lock entry. Do not add a source until its version, URL, and digest have been checked against upstream release information.
-
-## Commands
-
-Validate configuration and source metadata:
+Validate the project configuration and source lock:
 
 ```sh
-python3 tools/kerynth-build check
+make check
 ```
 
-Fetch all locked sources:
+Run the unit tests:
 
 ```sh
-python3 tools/kerynth-build fetch
+make test
 ```
 
-Fetch one named source:
+Build the minimal musl + static BusyBox root filesystem:
 
 ```sh
-python3 tools/kerynth-build fetch linux
+make rootfs
 ```
 
-A cached archive is hashed again before it is reused. A mismatch causes the cached file to be discarded and downloaded again. Downloads are written to a temporary file and moved into place only after the digest matches.
+Build the x86_64 Linux kernel and install its modules into that root filesystem:
+
+```sh
+make kernel
+```
+
+Generate the initramfs from the built BusyBox and Kerynth boot scripts:
+
+```sh
+make initramfs
+```
+
+Create the ISO staging tree and SquashFS image:
+
+```sh
+make iso-stage
+```
+
+Package the prepared staging tree as an ISO:
+
+```sh
+make iso
+```
+
+Run the full pipeline:
+
+```sh
+make build
+```
+
+The full pipeline runs rootfs, kernel, initramfs, SquashFS staging, validation, and ISO packaging in sequence. It may take a substantial amount of time and disk space.
+
+## Workspace layout
+
+The pipeline writes generated content only below `.kerynth-work/`:
+
+- `.kerynth-work/sources/` — checksum-verified source archives
+- `.kerynth-work/sources-unpacked/` — extracted source trees
+- `.kerynth-work/rootfs/` — generated minimal userspace
+- `.kerynth-work/build/` — musl, BusyBox, and kernel build directories
+- `.kerynth-work/kernel/` — kernel image, config, System.map, and release
+- `.kerynth-work/initramfs.cpio.gz` — boot initramfs
+- `.kerynth-work/iso-root/` — ISO staging tree
+- `.kerynth-work/kerynth-x86_64.iso` — packaged ISO
+
+The pipeline refuses to replace unmarked rootfs and kernel build directories. Remove only generated paths inside `.kerynth-work/` when intentionally starting over.
+
+## Development shell
+
+For isolated debugging only, a root shell can be enabled in a disposable VM:
+
+```sh
+python3 tools/kerynth-build-pipeline rootfs --developer-shell
+```
+
+Do not use that option for a release image. The default root and Live accounts are locked; the Live session is intended to start as the unprivileged `kerynth` user.
 
 ## Current limitations
 
-- No source archive is currently locked.
-- No archive extraction is implemented.
-- No compiler or sysroot is built yet.
-- No build recipe execution is implemented.
-- The tool does not provide sandboxing for future compiler processes; that must be designed before running build recipes.
+- A complete rootfs, kernel, and ISO have not yet been built and boot-tested in QEMU.
+- The kernel config fragment is a starting profile, not a complete reviewed hardware-support matrix.
+- Kernel modules are built, but the firmware catalogue, module dependency loading, and broad hardware coverage remain open.
+- The Live boot path and SquashFS handoff are implemented but not yet proven on real QEMU or physical media.
+- The installer is still a no-write placeholder; no partitioning, filesystem creation, account creation, or bootloader installation is implemented.
+- KDE Plasma is not part of the base rootfs or ISO profile yet.
+- The package manager currently performs signed package operations against disposable staging roots; it is not yet installed into the Kerynth target userspace.
+- Reproducibility has not been demonstrated by two clean, byte-identical full builds.
