@@ -2,6 +2,19 @@
 
 export PATH=/bin:/sbin
 BB=/bin/busybox
+$BB mkdir -p /proc /sys /dev
+if ! $BB mount -t proc proc /proc; then
+    $BB echo "Kerynth: failed to mount /proc."
+    exec $BB sh
+fi
+if ! $BB mount -t sysfs sysfs /sys; then
+    $BB echo "Kerynth: failed to mount /sys."
+    exec $BB sh
+fi
+if ! $BB mount -t devtmpfs devtmpfs /dev; then
+    $BB echo "Kerynth: failed to mount /dev."
+    exec $BB sh
+fi
 CMDLINE="$($BB cat /proc/cmdline 2>/dev/null)"
 if ! BOOT_MODE="$($BB sh /lib/kerynth-boot-mode "$CMDLINE" 2>/dev/null)"; then
     $BB echo "Kerynth: missing, duplicated, or unsupported boot mode."
@@ -27,10 +40,6 @@ esac
 if [ "$ROOTDELAY" -gt 30 ]; then
     ROOTDELAY=30
 fi
-
-$BB mount -t proc proc /proc
-$BB mount -t sysfs sysfs /sys
-$BB mount -t devtmpfs devtmpfs /dev
 
 if [ -x /bin/busybox ]; then
     $BB mdev -s 2>/dev/null || true
