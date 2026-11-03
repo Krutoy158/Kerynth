@@ -50,7 +50,7 @@ This roadmap separates design work from implemented and tested functionality. A 
 
 ## M4 — Native package management
 
-- [ ] Specify and version the .aet archive format.
+- [ ] Specify and version the .krt archive format.
 - [ ] Implement metadata parser and package verifier.
 - [ ] Implement repository metadata and signature verification.
 - [ ] Implement safe extraction and path validation.
