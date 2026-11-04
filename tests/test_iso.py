@@ -4,6 +4,7 @@ import shutil
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -49,6 +50,14 @@ class IsoBuilderTests(unittest.TestCase):
             root / "boot" / "initramfs.cpio.gz",
         )
         return root
+
+    def test_iso_build_preflight_requires_mtools(self):
+        def lookup(name):
+            return "/usr/bin/grub-mkrescue" if name == "grub-mkrescue" else None
+
+        with patch.object(ISO_TOOL.shutil, "which", side_effect=lookup):
+            with self.assertRaisesRegex(ISO_TOOL.IsoError, "mformat"):
+                ISO_TOOL.require_iso_build_tools()
 
     def test_accepts_complete_iso_staging_tree(self):
         with tempfile.TemporaryDirectory() as directory:
