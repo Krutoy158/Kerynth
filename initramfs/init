@@ -62,11 +62,13 @@ fi
 resolve_uuid() {
     wanted_uuid="$1"
     for device in $($BB find /dev -type b 2>/dev/null); do
-        found_uuid="$($BB blkid -s UUID -o value "$device" 2>/dev/null)"
-        if [ "$found_uuid" = "$wanted_uuid" ]; then
-            printf '%s\n' "$device"
-            return 0
-        fi
+        metadata="$($BB blkid "$device" 2>/dev/null)"
+        case "$metadata" in
+            *"UUID=\"$wanted_uuid\""*)
+                printf '%s\n' "$device"
+                return 0
+                ;;
+        esac
     done
     return 1
 }
@@ -74,11 +76,13 @@ resolve_uuid() {
 resolve_label() {
     wanted_label="$1"
     for device in $($BB find /dev -type b 2>/dev/null); do
-        found_label="$($BB blkid -s LABEL -o value "$device" 2>/dev/null)"
-        if [ "$found_label" = "$wanted_label" ]; then
-            printf '%s\n' "$device"
-            return 0
-        fi
+        metadata="$($BB blkid "$device" 2>/dev/null)"
+        case "$metadata" in
+            *"LABEL=\"$wanted_label\""*)
+                printf '%s\n' "$device"
+                return 0
+                ;;
+        esac
     done
     return 1
 }
