@@ -15,6 +15,17 @@ SPEC.loader.exec_module(PIPELINE)
 
 
 class BuildPipelineTests(unittest.TestCase):
+    def test_kernel_release_parser_ignores_make_directory_noise(self):
+        output = "make[1]: Entering directory '/build/linux'\\n6.6.161\\nmake[1]: Leaving directory '/build/linux'\\n"
+        self.assertEqual(PIPELINE.parse_kernel_release(output), "6.6.161")
+
+    def test_kernel_release_parser_accepts_local_version_suffix(self):
+        self.assertEqual(PIPELINE.parse_kernel_release("6.6.161-kerynth\\n"), "6.6.161-kerynth")
+
+    def test_kernel_release_parser_rejects_missing_release(self):
+        with self.assertRaises(PIPELINE.PipelineError):
+            PIPELINE.parse_kernel_release("make: *** No rule to make target\\n")
+
     def test_safe_name_rejects_traversal_and_absolute_paths(self):
         for value in ("../escape", "pkg/../../escape", "/etc/passwd", "pkg\\escape", "C:/escape"):
             with self.subTest(value=value):
