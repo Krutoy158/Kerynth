@@ -119,7 +119,7 @@ case "$BOOT_MODE" in
                 [ -e "$sys_device/removable" ] || continue
                 removable="$($BB cat "$sys_device/removable" 2>/dev/null)"
                 [ "$removable" = "1" ] || continue
-                candidate="/dev/\${sys_device##*/}"
+                candidate="/dev/${sys_device##*/}"
                 [ -b "$candidate" ] || continue
                 if $BB mount -t iso9660 -o ro "$candidate" /media; then
                     if [ -f /media/live/rootfs.squashfs ]; then
