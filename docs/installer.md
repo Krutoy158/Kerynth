@@ -1,4 +1,66 @@
-# Installer development
+# Kerynth installer development
+
+## GPT partition layout planner
+
+`tools/kerynth-install-layout` generates and validates GPT partition plans. It is deliberately separate from disk-writing operations.
+
+The automatic plan creates a 512 MiB EFI System Partition followed by an ext4 root partition using the remaining usable capacity. The manual plan accepts exactly one EFI partition and one root partition, with start and size expressed in whole MiB.
+
+Both modes support 512-byte and 4096-byte logical sectors. The planner checks GPT usable-sector bounds, 1 MiB alignment, duplicate partition roles, minimum sizes, partition order, and overlap. It produces JSON or an `sfdisk` script for review.
+
+### Automatic example
+
+For an 8 GiB virtual disk with 512-byte sectors:
+
+```sh
+python3 tools/kerynth-install-layout \
+  --disk-bytes 8589934592 \
+  --sector-size 512 \
+  --mode automatic
+```
+
+To print only the partition-table script:
+
+```sh
+python3 tools/kerynth-install-layout \
+  --disk-bytes 8589934592 \
+  --sector-size 512 \
+  --mode automatic \
+  --format sfdisk
+```
+
+### Manual example
+
+Create a JSON file describing the two partitions:
+
+```json
+{
+  "partitions": [
+    {
+      "role": "efi",
+      "start_mib": 1,
+      "size_mib": 512
+    },
+    {
+      "role": "root",
+      "start_mib": 513,
+      "size_mib": 7000
+    }
+  ]
+}
+```
+
+Then validate it:
+
+```sh
+python3 tools/kerynth-install-layout \
+  --disk-bytes 8589934592 \
+  --sector-size 512 \
+  --mode manual \
+  --layout-json ./layout.json
+```
+
+The generated plan contains `writes_performed: false`. The tool does not discover block devices, create partition tables, format filesystems, mount targets, or install a bootloader.
 
 ## Staged installation tree
 
@@ -26,8 +88,18 @@ python3 tools/kerynth-install-tree \
   --password-hash '<sha-512-crypt-or-yescrypt-hash>'
 ```
 
-Supported modes are `manual` and `automatic`. Both currently prepare the same staged layout and record the selected mode. The target directory must not already exist. The tool refuses paths outside the project-local workspace and never opens block devices.
+This command stages files only; it does not consume the GPT plan above or install to a disk.
 
 ## Important limitations
 
-This is an install-tree preparation tool, not the finished interactive installer. It does not create partitions or filesystems, mount devices, install GRUB to a disk, or write to a physical drive. The ISO's manual and automatic installer entries still display a no-write placeholder. A real installer needs an interactive layout editor, explicit target confirmation, partition/filesystem handling, bootloader recovery, and QEMU tests against disposable virtual disks before it can be enabled.
+The installer is not yet a finished interactive disk installer. The ISO's manual and automatic installer entries still display a no-write placeholder. No command in this development flow writes to a block device.
+
+Still required before enabling real installation:
+
+- Discover disks and show device model, size, transport, and current partition layout.
+- Require the user to select a target and show an explicit destructive-operation summary.
+- Add a separately reviewed disk execution layer that can only run on an explicitly selected target.
+- Create and validate filesystems, mount the target, install the operating system and bootloader, and support recovery after interruption.
+- Verify the complete installed boot flow against disposable QEMU virtual disks, including both UEFI and BIOS paths where supported.
+
+A successful layout-plan test is not proof of a working installer. Real disk-writing must remain disabled until the virtual-disk tests validate the entire install and reboot sequence.
