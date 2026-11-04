@@ -51,7 +51,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: kerynth-full-build-${{ github.head_ref || github.ref }}
+  group: kerynth-full-build-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
