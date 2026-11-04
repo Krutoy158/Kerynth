@@ -70,9 +70,23 @@ def partition(number, role, start, size):
 
 
 def validate_partitions(partitions, geometry):
-    if len(partitions) != 2:
+    if not isinstance(partitions, list) or len(partitions) != 2:
         fail("layout must contain exactly one EFI partition and one root partition")
-    roles = [item.get("role") for item in partitions]
+
+    required_fields = {"role", "start_mib", "size_mib"}
+    for item in partitions:
+        if not isinstance(item, dict):
+            fail("each manual partition must be an object")
+        if set(item) != required_fields:
+            fail("partition fields must be role, start_mib, and size_mib")
+        if item["role"] not in ("efi", "root"):
+            fail("partition role must be efi or root")
+        if type(item["start_mib"]) is not int or type(item["size_mib"]) is not int:
+            fail("partition start and size must be integers")
+        if item["start_mib"] < 1 or item["size_mib"] < 1:
+            fail("partition start and size must be positive and start after the GPT header")
+
+    roles = [item["role"] for item in partitions]
     if sorted(roles) != ["efi", "root"]:
         fail("layout must contain exactly one efi and one root role")
 
@@ -80,15 +94,9 @@ def validate_partitions(partitions, geometry):
     last_exclusive = geometry["last_usable_sector"] + 1
     normalized = []
     for number, item in enumerate(sorted(partitions, key=lambda value: value["start_mib"]), 1):
-        if set(item) != {"role", "start_mib", "size_mib"}:
-            fail("partition fields must be role, start_mib, and size_mib")
         role = item["role"]
         start_mib = item["start_mib"]
         size_mib = item["size_mib"]
-        if type(start_mib) is not int or type(size_mib) is not int:
-            fail("partition start and size must be integers")
-        if start_mib < 1 or size_mib < 1:
-            fail("partition start and size must be positive and start after the GPT header")
         start = (start_mib * MIB) // geometry["sector_size"]
         size = (size_mib * MIB) // geometry["sector_size"]
         if (start_mib * MIB) % geometry["sector_size"] or (size_mib * MIB) % geometry["sector_size"]:
@@ -115,7 +123,6 @@ def validate_partitions(partitions, geometry):
     for number, item in enumerate(normalized, 1):
         item["number"] = number
     return normalized
-
 
 def render_sfdisk(geometry, partitions):
     lines = [
