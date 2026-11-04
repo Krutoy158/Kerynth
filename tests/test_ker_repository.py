@@ -124,6 +124,26 @@ class KerRepositoryTests(unittest.TestCase):
             self.build_repository()
         self.assertFalse(self.repo.exists())
 
+    def test_repository_signing_key_must_be_trusted(self):
+        self.make_package("key-mismatch")
+        unrelated = Ed25519PrivateKey.generate()
+        unrelated_path = self.root / "unrelated-private.pem"
+        unrelated_path.write_bytes(unrelated.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+        with self.assertRaises(REPOSITORY.RepositoryError):
+            REPOSITORY.build_repository(Namespace(
+                repository="stable",
+                packages_dir=str(self.packages),
+                output_dir=str(self.repo),
+                keyring=str(self.keyring),
+                key_id="test-key",
+                private_key=str(unrelated_path),
+            ))
+        self.assertFalse(self.repo.exists())
+
     def test_path_traversal_in_index_is_rejected(self):
         value = {
             "format_version": 1,
