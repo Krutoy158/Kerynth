@@ -364,6 +364,156 @@ def sync_repository(args):
     print("Synced repository {}: {} package(s) downloaded".format(index["repository"], downloaded))
 
 
+def read_installed_readonly(root_path):
+    root = Path(root_path)
+    if root.is_symlink() or not root.is_dir():
+        fail("installed root must be an existing, non-symlink directory")
+    root = root.resolve(strict=True)
+
+    database = root
+    for part in ("var", "lib", "kerynth", "packages"):
+        database = database / part
+        try:
+            metadata = database.lstat()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise RepositoryError("cannot inspect installed package database: " + str(exc)) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            fail("installed package database path contains a non-directory or symbolic link")
+
+    installed = {}
+    for record in sorted(database.iterdir(), key=lambda item: item.name):
+        if record.suffix != ".json":
+            continue
+        metadata = record.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            fail("installed package record must be a regular file: " + record.name)
+        if metadata.st_size > 1024 * 1024:
+            fail("installed package record exceeds the size limit: " + record.name)
+        name = record.stem
+        if not KER.NAME.fullmatch(name):
+            fail("invalid installed package record filename: " + record.name)
+        try:
+            value = json.loads(
+                record.read_text(encoding="utf-8"),
+                object_pairs_hook=KER.pairs_hook,
+                parse_constant=lambda item: fail("invalid installed record JSON constant: " + item),
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, KER.PackageError) as exc:
+            raise RepositoryError("cannot read installed package record " + record.name + ": " + str(exc)) from exc
+        if not isinstance(value, dict) or value.get("name") != name:
+            fail("installed package record identity mismatch: " + record.name)
+        version = value.get("version")
+        architecture = value.get("architecture")
+        if not isinstance(version, str) or not KER.VERSION.fullmatch(version):
+            fail("invalid installed package version: " + record.name)
+        if architecture not in ("x86_64", "noarch"):
+            fail("invalid installed package architecture: " + record.name)
+        installed[name] = {"version": version, "architecture": architecture}
+    return installed
+
+
+def numeric_version_parts(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+(?:\\.[0-9]+)*", value) is None:
+        return None
+    return tuple(int(part, 10) for part in value.split("."))
+
+
+def compare_numeric_versions(left, right):
+    left_parts = numeric_version_parts(left)
+    right_parts = numeric_version_parts(right)
+    if left_parts is None or right_parts is None:
+        return None
+    width = max(len(left_parts), len(right_parts))
+    left_parts += (0,) * (width - len(left_parts))
+    right_parts += (0,) * (width - len(right_parts))
+    return (left_parts > right_parts) - (left_parts < right_parts)
+
+
+def check_updates(repository_dir, keyring_path, installed_root):
+    index = verify_repository(repository_dir, keyring_path)
+    installed = read_installed_readonly(installed_root)
+    available = {item["name"]: item for item in index["packages"]}
+    packages = []
+
+    for name in sorted(installed):
+        current = installed[name]
+        candidate = available.get(name)
+        if candidate is None:
+            packages.append({
+                "name": name,
+                "installed_version": current["version"],
+                "status": "not_in_repository",
+            })
+            continue
+        if candidate["architecture"] not in ("noarch", "x86_64"):
+            packages.append({
+                "name": name,
+                "installed_version": current["version"],
+                "repository_version": candidate["version"],
+                "status": "architecture_mismatch",
+            })
+            continue
+
+        comparison = compare_numeric_versions(current["version"], candidate["version"])
+        if comparison is None:
+            status = "manual_review" if current["version"] != candidate["version"] else "up_to_date"
+        elif comparison < 0:
+            status = "update_available"
+        elif comparison > 0:
+            status = "repository_older"
+        else:
+            status = "up_to_date"
+
+        packages.append({
+            "name": name,
+            "installed_version": current["version"],
+            "repository_version": candidate["version"],
+            "status": status,
+            "filename": candidate["filename"],
+            "sha256": candidate["sha256"],
+            "size": candidate["size"],
+        })
+
+    counts = {}
+    for item in packages:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    return {
+        "format_version": 1,
+        "repository": index["repository"],
+        "installed_count": len(installed),
+        "packages": packages,
+        "summary": counts,
+        "automatic_changes": False,
+    }
+
+
+def updates_command(args):
+    report = check_updates(args.repo_dir, args.keyring, args.installed_root)
+    if args.json:
+        print(json.dumps(report, sort_keys=True, indent=2))
+        return 0
+    print("Repository: {}".format(report["repository"]))
+    print("Installed packages checked: {}".format(report["installed_count"]))
+    for item in report["packages"]:
+        if "repository_version" in item:
+            print("{}: {} -> {} ({})".format(
+                item["name"],
+                item["installed_version"],
+                item["repository_version"],
+                item["status"],
+            ))
+        else:
+            print("{}: {} ({})".format(
+                item["name"],
+                item["installed_version"],
+                item["status"],
+            ))
+    print("Automatic changes: disabled")
+    return 0
+
+
 def verify_command(args):
     index = verify_repository(args.repo_dir, args.keyring)
     print("Verified repository {} ({} package(s))".format(index["repository"], len(index["packages"])))
@@ -392,6 +542,13 @@ def main(argv=None):
     sync.add_argument("--cache-dir", required=True)
     sync.add_argument("--keyring", required=True)
     sync.set_defaults(handler=sync_repository)
+
+    updates = commands.add_parser("updates")
+    updates.add_argument("--repo-dir", required=True)
+    updates.add_argument("--keyring", required=True)
+    updates.add_argument("--installed-root", required=True)
+    updates.add_argument("--json", action="store_true")
+    updates.set_defaults(handler=updates_command)
 
     args = parser.parse_args(argv)
     try:
