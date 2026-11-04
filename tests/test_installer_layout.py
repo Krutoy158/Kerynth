@@ -135,7 +135,7 @@ class InstallerLayoutTests(unittest.TestCase):
                 ]},
             )
 
-    def test_manual_layout_rejects_unaligned_partition(self):
+    def test_manual_layout_rejects_fractional_mib_boundaries(self):
         with self.assertRaises(LAYOUT.LayoutError):
             LAYOUT.build_plan(
                 self.disk_bytes,
@@ -143,7 +143,7 @@ class InstallerLayoutTests(unittest.TestCase):
                 "manual",
                 {"partitions": [
                     {"role": "efi", "start_mib": 1, "size_mib": 512},
-                    {"role": "root", "start_mib": 512, "size_mib": 7000},
+                    {"role": "root", "start_mib": 512.5, "size_mib": 7000},
                 ]},
             )
 
