@@ -36,13 +36,15 @@ class BootCoreTests(unittest.TestCase):
         self.assertIn('if [ "$ROOTFLAGS" = "rw" ]', content)
         self.assertIn('switch_root /newroot /sbin/init', content)
 
-    def test_live_mounts_explicit_iso_uuid_and_squashfs_read_only(self):
+    def test_live_mounts_read_only_squashfs_under_writable_overlay(self):
         content = (ROOT / 'initramfs' / 'init').read_text(encoding='utf-8')
         self.assertIn('kerynth.media=*', content)
         self.assertIn('mount -t "$MEDIA_FSTYPE" -o ro "$MEDIA_DEVICE" /media', content)
         self.assertIn('MEDIA_FSTYPE="$($BB blkid -s TYPE -o value "$MEDIA_DEVICE" 2>/dev/null)"', content)
         self.assertIn('iso9660) ;;', content)
-        self.assertIn('mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /newroot', content)
+        self.assertIn('mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /lower', content)
+        self.assertIn('size=256M', content)
+        self.assertIn('mount -t overlay overlay -o lowerdir=/lower,upperdir=/overlay/upper,workdir=/overlay/work /newroot', content)
         self.assertIn('mount --move /media /newroot/run/kerynth-media', content)
 
 
