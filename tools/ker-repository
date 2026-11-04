@@ -49,6 +49,14 @@ def regular_file(path, label):
     return path
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def read_index(raw):
     if not isinstance(raw, bytes) or len(raw) > MAX_INDEX_SIZE:
         fail("repository index exceeds the size limit")
@@ -145,7 +153,7 @@ def package_metadata(path, keyring_path):
         "version": manifest["version"],
         "architecture": manifest["architecture"],
         "description": manifest["description"],
-        "sha256": KER.hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": sha256_file(path),
         "size": path.stat().st_size,
         "dependencies": manifest["dependencies"],
         "conflicts": manifest["conflicts"],
@@ -224,7 +232,7 @@ def verify_repository(repo_dir, keyring_path):
         package = regular_file(root / filename, "repository package")
         if package.stat().st_size != item["size"]:
             fail("repository package size mismatch: " + filename)
-        digest = hashlib.sha256(package.read_bytes()).hexdigest()
+        digest = sha256_file(package)
         if digest != item["sha256"]:
             fail("repository package checksum mismatch: " + filename)
         manifest, unused_payload = KER.read_verified_package(package, keyring_path)
@@ -249,7 +257,7 @@ def package_metadata_from_manifest(filename, path, manifest):
         "version": manifest["version"],
         "architecture": manifest["architecture"],
         "description": manifest["description"],
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": sha256_file(path),
         "size": path.stat().st_size,
         "dependencies": manifest["dependencies"],
         "conflicts": manifest["conflicts"],
@@ -314,6 +322,8 @@ def sync_repository(args):
         target = destination / filename
         if target.is_symlink():
             fail("cached package must not be a symbolic link: " + filename)
+        if target.exists() and not target.is_file():
+            fail("cached package path is not a regular file: " + filename)
         if target.is_file():
             if target.stat().st_size == item["size"] and hashlib.sha256(target.read_bytes()).hexdigest() == item["sha256"]:
                 KER.read_verified_package(target, args.keyring)
@@ -352,6 +362,11 @@ def sync_repository(args):
     print("Synced repository {}: {} package(s) downloaded".format(index["repository"], downloaded))
 
 
+def verify_command(args):
+    index = verify_repository(args.repo_dir, args.keyring)
+    print("Verified repository {} ({} package(s))".format(index["repository"], len(index["packages"])))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="ker-repository")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -368,12 +383,7 @@ def main(argv=None):
     verify = commands.add_parser("verify")
     verify.add_argument("--repo-dir", required=True)
     verify.add_argument("--keyring", required=True)
-    verify.set_defaults(handler=lambda args: print(
-        "Verified repository {} ({} package(s))".format(
-            verify_repository(args.repo_dir, args.keyring)["repository"],
-            len(verify_repository(args.repo_dir, args.keyring)["packages"]),
-        )
-    ))
+    verify.set_defaults(handler=verify_command)
 
     sync = commands.add_parser("sync")
     sync.add_argument("--url", required=True)
