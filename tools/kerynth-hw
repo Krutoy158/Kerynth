@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 import argparse
+import fnmatch
 import json
+import platform
 import re
+import shutil
+import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ID_PATTERN = re.compile(r"^[0-9a-fA-F]{4}$")
+MODULE_SUFFIXES = (".ko", ".ko.xz", ".ko.zst", ".ko.gz")
+
 
 class HardwareError(Exception):
     pass
+
 
 def read_text(path):
     try:
@@ -16,14 +23,157 @@ def read_text(path):
     except (OSError, UnicodeError):
         return None
 
+
 def valid_id(value):
     return value is not None and ID_PATTERN.fullmatch(value) is not None
+
 
 def link_target_name(path):
     try:
         return path.resolve(strict=True).name
     except OSError:
         return None
+
+
+def normalize_module_name(value):
+    name = Path(value).name
+    for suffix in (".zst", ".xz", ".gz"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    if name.endswith(".ko"):
+        name = name[:-3]
+    return name.replace("-", "_")
+
+
+def parse_module_database(modules_dir):
+    modules_dir = Path(modules_dir)
+    alias_file = modules_dir / "modules.alias"
+    dependency_file = modules_dir / "modules.dep"
+    if not alias_file.is_file() or not dependency_file.is_file():
+        return None
+
+    module_paths = {}
+    for line in dependency_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        if ":" not in line:
+            continue
+        relative = line.split(":", 1)[0].strip()
+        pure = PurePosixPath(relative)
+        if pure.is_absolute() or not pure.parts or any(part in ("", ".", "..") for part in pure.parts):
+            continue
+        if not any(relative.endswith(suffix) for suffix in MODULE_SUFFIXES):
+            continue
+        candidate = modules_dir.joinpath(*pure.parts)
+        if candidate.is_file() and not candidate.is_symlink():
+            module_paths.setdefault(normalize_module_name(relative), []).append(relative)
+
+    aliases = []
+    for line in alias_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split()
+        if len(fields) != 3 or fields[0] != "alias":
+            continue
+        pattern, module = fields[1], normalize_module_name(fields[2])
+        if pattern and module:
+            aliases.append((pattern, module))
+    return {"module_paths": module_paths, "aliases": aliases}
+
+
+def match_modules(modalias, database):
+    if not modalias or database is None:
+        return []
+    matches = {}
+    for pattern, module in database["aliases"]:
+        if fnmatch.fnmatchcase(modalias, pattern):
+            for relative in database["module_paths"].get(module, []):
+                matches[(module, relative)] = {"module": module, "path": relative}
+    return [matches[key] for key in sorted(matches)]
+
+
+def safe_firmware_path(root, filename):
+    if not filename or "\x00" in filename or "\\" in filename:
+        return None
+    relative = PurePosixPath(filename)
+    if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
+        return None
+    root = Path(root).resolve()
+    candidate = root.joinpath(*relative.parts)
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError:
+        return None
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def query_module_firmware(module_path, firmware_root, modinfo_binary):
+    if not modinfo_binary:
+        return {"status": "not_checked", "required": []}
+    try:
+        result = subprocess.run(
+            [modinfo_binary, "-F", "firmware", str(module_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"status": "not_checked", "required": []}
+    if result.returncode != 0:
+        return {"status": "not_checked", "required": []}
+
+    required = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+    if not required:
+        return {"status": "not_required", "required": []}
+
+    missing = [name for name in required if safe_firmware_path(firmware_root, name) is None]
+    return {
+        "status": "missing" if missing else "available",
+        "required": required,
+        "missing": missing,
+    }
+
+
+def enrich_device(device, database, modules_dir, firmware_root, modinfo_binary, firmware_cache):
+    modalias = device.get("modalias")
+    candidates = match_modules(modalias, database)
+    enriched = []
+    for candidate in candidates:
+        module_path = Path(modules_dir).joinpath(*PurePosixPath(candidate["path"]).parts)
+        cache_key = str(module_path)
+        if cache_key not in firmware_cache:
+            firmware_cache[cache_key] = query_module_firmware(
+                module_path,
+                firmware_root,
+                modinfo_binary,
+            )
+        firmware = firmware_cache[cache_key]
+        enriched.append({
+            **candidate,
+            "firmware_status": firmware["status"],
+            "firmware_required": firmware["required"],
+            "firmware_missing": firmware.get("missing", []),
+        })
+
+    if database is None:
+        status = "not_checked"
+    elif not modalias:
+        status = "no_modalias"
+    elif not candidates:
+        status = "no_match"
+    else:
+        status = "available"
+
+    device["kernel_module_status"] = status
+    device["driver_candidates"] = enriched
+    device["firmware_status"] = (
+        "not_checked" if not enriched else
+        "available" if any(item["firmware_status"] in ("available", "not_required") for item in enriched) else
+        "missing" if all(item["firmware_status"] == "missing" for item in enriched) else
+        "not_checked"
+    )
+    return device
+
 
 def scan_pci(root):
     devices = root / "bus" / "pci" / "devices"
@@ -33,10 +183,11 @@ def scan_pci(root):
     for device in sorted(devices.iterdir(), key=lambda item: item.name):
         vendor = read_text(device / "vendor")
         product = read_text(device / "device")
-        if not (valid_id(vendor.removeprefix("0x") if vendor else None) and valid_id(product.removeprefix("0x") if product else None)):
+        if not (
+            valid_id(vendor.removeprefix("0x") if vendor else None)
+            and valid_id(product.removeprefix("0x") if product else None)
+        ):
             continue
-        driver = link_target_name(device / "driver")
-        module = link_target_name(device / "driver" / "module")
         results.append({
             "bus": "pci",
             "address": device.name,
@@ -44,10 +195,11 @@ def scan_pci(root):
             "device_id": product.removeprefix("0x").lower(),
             "class": read_text(device / "class"),
             "modalias": read_text(device / "modalias"),
-            "driver": driver,
-            "module": module,
+            "driver": link_target_name(device / "driver"),
+            "module": link_target_name(device / "driver" / "module"),
         })
     return results
+
 
 def scan_usb(root):
     devices = root / "bus" / "usb" / "devices"
@@ -71,21 +223,43 @@ def scan_usb(root):
         })
     return results
 
-def scan(root):
-    root = Path(root)
+
+def scan(sys_root, modules_root="/lib/modules", kernel_release=None, firmware_root="/lib/firmware", modinfo_binary=None):
+    sys_root = Path(sys_root)
+    release = kernel_release or platform.release()
+    modules_dir = Path(modules_root) / release
+    database = parse_module_database(modules_dir)
+    binary = modinfo_binary if modinfo_binary is not None else shutil.which("modinfo")
+    firmware_cache = {}
+    devices = scan_pci(sys_root) + scan_usb(sys_root)
+    for device in devices:
+        enrich_device(device, database, modules_dir, firmware_root, binary, firmware_cache)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "telemetry": False,
-        "devices": scan_pci(root) + scan_usb(root),
+        "kernel_release": release,
+        "module_database_status": "available" if database is not None else "not_found",
+        "devices": devices,
     }
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="kerynth-hw")
     parser.add_argument("--sys-root", default="/sys")
+    parser.add_argument("--modules-root", default="/lib/modules")
+    parser.add_argument("--kernel-release", default=platform.release())
+    parser.add_argument("--firmware-root", default="/lib/firmware")
+    parser.add_argument("--modinfo", default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = scan(args.sys_root)
+        result = scan(
+            args.sys_root,
+            args.modules_root,
+            args.kernel_release,
+            args.firmware_root,
+            args.modinfo,
+        )
     except (OSError, HardwareError) as exc:
         print(f"kerynth-hw: error: {exc}", file=sys.stderr)
         return 1
@@ -93,14 +267,19 @@ def main(argv=None):
         print(json.dumps(result, sort_keys=True, indent=2))
     else:
         print("Kerynth hardware inventory (local only)")
+        print(f"Kernel: {result['kernel_release']}")
+        print(f"Module database: {result['module_database_status']}")
         print(f"Detected devices: {len(result['devices'])}")
         for item in result["devices"]:
             identity = f"{item['vendor_id']}:{item['device_id']}"
             state = item["driver"] or "no driver bound"
-            module = f" ({item['module']})" if item["module"] else ""
-            print(f"{item['bus']} {item['address']} {identity} {state}{module}")
+            if item["driver_candidates"]:
+                state += "; candidates: " + ", ".join(candidate["module"] for candidate in item["driver_candidates"])
+            print(f"{item['bus']} {item['address']} {identity} {state}")
+            print(f"  module match: {item['kernel_module_status']}; firmware: {item['firmware_status']}")
         print("Telemetry: disabled")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
