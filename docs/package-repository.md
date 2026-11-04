@@ -45,6 +45,18 @@ Publish the repository directory over HTTPS, then run:
 
 Synchronization verifies the signed index before downloading package files, requires HTTPS (including after redirects), verifies each downloaded size and SHA-256 digest, and verifies every package signature before atomically placing it in the local cache. Existing valid cached packages are reused.
 
+## Check installed package updates
+
+The update checker reads package records from an existing installed root and compares them with a verified local repository. It does not create or modify files in the installed root.
+
+    python3 tools/ker-repository updates \
+      --repo-dir ./repo/stable \
+      --keyring ./trusted-keys.json \
+      --installed-root ./.kerynth-work/targets/test-install \
+      --json
+
+Only dot-separated numeric versions (for example, 1.2 or 1.2.3) are ordered automatically. A newer repository version is marked `update_available`; a repository version older than the installed one is marked `repository_older`, never as an update. Versions with suffixes or formats the checker cannot order are marked `manual_review`. The report always sets `automatic_changes` to false.
+
 ## Current limitations
 
 This is the first repository-metadata and cache layer. It does not resolve dependency graphs, calculate upgrades, install packages into /, manage rollback transactions, rotate keys, or bootstrap a Python/cryptography runtime into the target system. The existing package installer still restricts installation to disposable build targets. A running-system package manager and update UI remain separate work.
