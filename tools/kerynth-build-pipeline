@@ -187,7 +187,7 @@ def set_busybox_config(path,fragment):
         match=re.fullmatch(r"CONFIG_([A-Z0-9_]+)=(.*)",line)
         if match:
             settings[match.group(1)]=match.group(2)
-    for symbol in ("STATIC","INSTALL_APPLET_SYMLINKS","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","FEATURE_BLKID_LABEL","MDEV","MODPROBE_SMALL","MODPROBE","FEATURE_MODUTILS_ALIAS","FEATURE_MODUTILS_SYMBOLS","REBOOT","POWEROFF","SU","CHOWN","CHMOD","FIND","MKDIR","CAT","SLEEP","ECHO","TEST","PRINTF","HOSTNAME","SYNC","ID"):
+    for symbol in ("STATIC","INSTALL_APPLET_SYMLINKS","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","FEATURE_BLKID_LABEL","MDEV","MODPROBE","FEATURE_MODUTILS_ALIAS","FEATURE_MODUTILS_SYMBOLS","REBOOT","POWEROFF","SU","CHOWN","CHMOD","FIND","MKDIR","CAT","SLEEP","ECHO","TEST","PRINTF","HOSTNAME","SYNC","ID"):
         settings[symbol]="y"
     for symbol,value in settings.items():
         pattern=re.compile(r"^(?:# )?CONFIG_"+re.escape(symbol)+r"(?:=.*| is not set)$",re.MULTILINE)

@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -118,7 +119,9 @@ class BuildPipelineTests(unittest.TestCase):
             self.assertTrue(loader.stat().st_mode & 0o111)
             content = loader.read_text(encoding="utf-8")
             for bus in ("pci", "usb", "platform", "acpi", "virtio", "sdio"):
-                self.assertIn("/sys/bus/{}/devices/*/modalias".format(bus), content)
+                self.assertIn("/sys/bus/$bus/devices/*/modalias", content)
+            syntax = subprocess.run(["sh", "-n", str(loader)], capture_output=True, text=True, check=False)
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
             startup = (root / "etc/init.d/rcS").read_text(encoding="utf-8")
             self.assertIn("/etc/init.d/kerynth-modules", startup)
 
