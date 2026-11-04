@@ -77,6 +77,13 @@ class BuildPipelineTests(unittest.TestCase):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
             self.assertIn("# CONFIG_TC is not set", content)
 
+    def test_base_rootfs_has_mountpoints_needed_by_read_only_boot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            PIPELINE.write_base(root, False)
+            for name in ("dev", "proc", "sys", "run"):
+                self.assertTrue((root / name).is_dir(), name)
+
     def test_base_root_account_is_locked_by_default(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
