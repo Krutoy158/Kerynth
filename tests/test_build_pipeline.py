@@ -22,6 +22,10 @@ class BuildPipelineTests(unittest.TestCase):
     def test_kernel_release_parser_accepts_local_version_suffix(self):
         self.assertEqual(PIPELINE.parse_kernel_release("6.6.161-kerynth\n"), "6.6.161-kerynth")
 
+    def test_overlay_kernel_requires_tmpfs_extended_attributes(self):
+        self.assertIn("CONFIG_OVERLAY_FS=y", PIPELINE.KERNEL_REQUIRED)
+        self.assertIn("CONFIG_TMPFS_XATTR=y", PIPELINE.KERNEL_REQUIRED)
+
     def test_kernel_release_parser_rejects_missing_release(self):
         with self.assertRaises(PIPELINE.PipelineError):
             PIPELINE.parse_kernel_release("make: *** No rule to make target\n")
