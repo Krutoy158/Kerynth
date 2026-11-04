@@ -20,7 +20,7 @@ BUILD=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD)
 MAX_MEMBERS=250000
 MAX_EXTRACTED_SIZE=8*1024*1024*1024
-BUSYBOX_REQUIRED=("init","mount","switch_root","sh","getty","login","blkid","mdev","reboot","poweroff","su","chown","chmod","find","mkdir","cat","sleep","echo","test","printf","hostname","sync","id")
+BUSYBOX_REQUIRED=("init","mount","umount","switch_root","sh","getty","login","blkid","mdev","reboot","poweroff","su","chown","chmod","find","mkdir","cat","sleep","echo","test","printf","hostname","sync","id")
 KERNEL_REQUIRED=("CONFIG_X86_64=y","CONFIG_BLK_DEV_INITRD=y","CONFIG_DEVTMPFS=y","CONFIG_VIRTIO_BLK=y","CONFIG_SQUASHFS=y","CONFIG_SQUASHFS_XZ=y","CONFIG_OVERLAY_FS=y","CONFIG_TMPFS_XATTR=y","CONFIG_BLK_DEV_LOOP=y","CONFIG_SCSI=y","CONFIG_BLK_DEV_SR=y","CONFIG_ATA_PIIX=y","CONFIG_ISO9660_FS=y","CONFIG_USB_STORAGE=y","CONFIG_USB_UAS=y","CONFIG_SERIAL_8250_CONSOLE=y")
 
 class PipelineError(Exception):
@@ -187,7 +187,7 @@ def set_busybox_config(path,fragment):
         match=re.fullmatch(r"CONFIG_([A-Z0-9_]+)=(.*)",line)
         if match:
             settings[match.group(1)]=match.group(2)
-    for symbol in ("STATIC","INSTALL_APPLET_SYMLINKS","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","FEATURE_BLKID_LABEL","MDEV","REBOOT","POWEROFF","SU","CHOWN","CHMOD","FIND","MKDIR","CAT","SLEEP","ECHO","TEST","PRINTF","HOSTNAME","SYNC","ID"):
+    for symbol in ("STATIC","INSTALL_APPLET_SYMLINKS","INIT","FEATURE_USE_INITTAB","ASH","SH_IS_ASH","MOUNT","FEATURE_MOUNT_LOOP","SWITCH_ROOT","GETTY","LOGIN","BLKID","FEATURE_BLKID_TYPE","FEATURE_BLKID_LABEL","MDEV","UMOUNT","REBOOT","POWEROFF","SU","CHOWN","CHMOD","FIND","MKDIR","CAT","SLEEP","ECHO","TEST","PRINTF","HOSTNAME","SYNC","ID"):
         settings[symbol]="y"
     for symbol,value in settings.items():
         pattern=re.compile(r"^(?:# )?CONFIG_"+re.escape(symbol)+r"(?:=.*| is not set)$",re.MULTILINE)

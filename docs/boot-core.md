@@ -18,7 +18,7 @@ The initramfs requires exactly one `kerynth.mode` parameter. Accepted values are
 
 Each ISO GRUB entry probes the UUID of the filesystem containing the Kerynth bootloader and passes it as `kerynth.media=UUID=...`.
 
-For `live`, `installer-manual`, and `installer-automatic`, initramfs requires exactly one media UUID and rejects a separate `root=` argument. It locates only that UUID, mounts the boot medium read-only at `/media`, and mounts `/media/live/rootfs.squashfs` as SquashFS with read-only loop options. It does not scan, mount, partition, format, or write to internal disks. The medium mount is moved into `/run/kerynth-media` inside the selected root so the Live session can still access it.
+For `live`, `installer-manual`, and `installer-automatic`, initramfs requires exactly one media UUID and rejects a separate `root=` argument. It first resolves that UUID and attempts a read-only ISO9660 mount. If the minimal BusyBox `blkid` cannot identify the ISO UUID, it falls back only to block devices marked removable by sysfs; each candidate is mounted as ISO9660 read-only and accepted only when `live/rootfs.squashfs` exists. Fixed internal disks are not searched by this fallback, and no block device is written. The medium mount is moved into `/run/kerynth-media` inside the selected root so the Live session can still access it.
 
 The selected mode is written to the memory-backed `/run/kerynth/boot-mode` marker. The rootfs startup dispatcher reads that marker and selects an unprivileged Live shell or the current no-write installer placeholder. The `/run` tmpfs is created by initramfs and must not be remounted by the target startup scripts, or the marker and media mount would be hidden.
 
