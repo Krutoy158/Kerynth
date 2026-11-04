@@ -89,6 +89,40 @@ class InstallerImageTests(unittest.TestCase):
                 )
             run.assert_not_called()
 
+    def test_modified_sfdisk_script_is_rejected_before_sfdisk(self):
+        plan = dict(self.plan)
+        plan["sfdisk_script"] = "label: dos\\n"
+        with patch.object(IMAGE, "run_sfdisk") as run:
+            with self.assertRaises(IMAGE.ImageInstallError):
+                IMAGE.apply_plan_to_image(self.image, plan, confirm=True)
+            run.assert_not_called()
+
+    def test_modified_partition_size_is_rejected_before_sfdisk(self):
+        plan = dict(self.plan)
+        plan["partitions"] = [dict(item) for item in self.plan["partitions"]]
+        plan["partitions"][0]["size_sectors"] += 2048
+        with patch.object(IMAGE, "run_sfdisk") as run:
+            with self.assertRaises(IMAGE.ImageInstallError):
+                IMAGE.apply_plan_to_image(self.image, plan, confirm=True)
+            run.assert_not_called()
+
+    def test_extra_plan_field_is_rejected_before_sfdisk(self):
+        plan = dict(self.plan)
+        plan["extra"] = "unexpected"
+        with patch.object(IMAGE, "run_sfdisk") as run:
+            with self.assertRaises(IMAGE.ImageInstallError):
+                IMAGE.apply_plan_to_image(self.image, plan, confirm=True)
+            run.assert_not_called()
+
+    def test_inconsistent_geometry_is_rejected_before_sfdisk(self):
+        plan = dict(self.plan)
+        plan["geometry"] = dict(self.plan["geometry"])
+        plan["geometry"]["last_usable_sector"] -= 1
+        with patch.object(IMAGE, "run_sfdisk") as run:
+            with self.assertRaises(IMAGE.ImageInstallError):
+                IMAGE.apply_plan_to_image(self.image, plan, confirm=True)
+            run.assert_not_called()
+
     @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk is required for disk image integration")
     def test_writes_and_verifies_gpt_only_in_temporary_image(self):
         result = IMAGE.apply_plan_to_image(
