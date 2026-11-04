@@ -92,6 +92,12 @@ jobs:
         with:
           name: kerynth-build-failure-diagnostics
           path: |
-            .kerynth-work/**
+            .kerynth-work/build/linux-6.6.161/.config
+            .kerynth-work/rootfs/.kerynth-rootfs.json
+            .kerynth-work/rootfs/lib/modules/**/modules.order
+            .kerynth-work/rootfs/lib/modules/**/modules.builtin
+            .kerynth-work/rootfs/lib/modules/**/modules.builtin.modinfo
+            .kerynth-work/rootfs/lib/modules/**/modules.dep
+            .kerynth-work/kernel/**
           if-no-files-found: ignore
           include-hidden-files: true
