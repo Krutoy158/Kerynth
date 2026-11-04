@@ -141,6 +141,25 @@ def filesystem_uuid(device):
     return value.lower()
 
 
+def cleanup_mounts_and_loop(mounted, loop_device):
+    errors = []
+    for mountpoint in reversed(mounted):
+        result = run_command(["umount", str(mountpoint)], check=False)
+        if result.returncode != 0:
+            fallback = run_command(["umount", "--lazy", str(mountpoint)], check=False)
+            if fallback.returncode != 0:
+                detail = (fallback.stderr or result.stderr).strip()
+                errors.append("cannot unmount {}: {}".format(mountpoint, detail))
+            else:
+                print("warning: used lazy unmount for {}".format(mountpoint), file=sys.stderr)
+    if loop_device is not None:
+        result = run_command(["losetup", "--detach", loop_device], check=False)
+        if result.returncode != 0:
+            errors.append("cannot detach {}: {}".format(loop_device, result.stderr.strip()))
+    if errors:
+        fail("installer cleanup failed: " + "; ".join(errors))
+
+
 def prepare_system_image(image_path, disk_bytes, sector_size, mode, workspace_path, password_hash_file, layout_path=None, confirm=False):
     if os.geteuid() != 0:
         fail("system-image installation requires root inside a disposable test environment")
@@ -242,16 +261,11 @@ def prepare_system_image(image_path, disk_bytes, sector_size, mode, workspace_pa
                 "verified": True,
             }
         finally:
-            for mountpoint in reversed(mounted):
-                result = run_command(["umount", str(mountpoint)], check=False)
-                if result.returncode != 0:
-                    print("warning: could not unmount {}: {}".format(mountpoint, result.stderr.strip()), file=sys.stderr)
-            if loop_device is not None:
-                result = run_command(["losetup", "--detach", loop_device], check=False)
-                if result.returncode != 0:
-                    print("warning: could not detach {}: {}".format(loop_device, result.stderr.strip()), file=sys.stderr)
-            if staged_target is not None:
-                shutil.rmtree(staged_target, ignore_errors=True)
+            try:
+                cleanup_mounts_and_loop(mounted, loop_device)
+            finally:
+                if staged_target is not None:
+                    shutil.rmtree(staged_target, ignore_errors=True)
 
 
 def main(argv=None):

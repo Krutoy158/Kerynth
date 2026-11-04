@@ -2,6 +2,8 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import call, patch
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -55,6 +57,44 @@ class InstallerSystemImageTests(unittest.TestCase):
         with self.assertRaises(INSTALLER.SystemInstallError):
             INSTALLER.loop_partition_path("/dev/loop12", 3)
 
+
+
+    def test_cleanup_unmounts_in_reverse_order_before_detaching_loop(self):
+        mounted = [Path("/mnt/root"), Path("/mnt/root/boot/efi")]
+        results = [SimpleNamespace(returncode=0, stderr="")] * 3
+        with patch.object(INSTALLER, "run_command", side_effect=results) as command:
+            INSTALLER.cleanup_mounts_and_loop(mounted, "/dev/loop12")
+        self.assertEqual(
+            command.call_args_list,
+            [
+                call(["umount", "/mnt/root/boot/efi"], check=False),
+                call(["umount", "/mnt/root"], check=False),
+                call(["losetup", "--detach", "/dev/loop12"], check=False),
+            ],
+        )
+
+    def test_cleanup_uses_lazy_unmount_fallback(self):
+        mounted = [Path("/mnt/root")]
+        results = [
+            SimpleNamespace(returncode=1, stderr="busy"),
+            SimpleNamespace(returncode=0, stderr=""),
+            SimpleNamespace(returncode=0, stderr=""),
+        ]
+        with patch.object(INSTALLER, "run_command", side_effect=results) as command:
+            INSTALLER.cleanup_mounts_and_loop(mounted, "/dev/loop12")
+        self.assertEqual(command.call_count, 3)
+        self.assertEqual(command.call_args_list[1], call(["umount", "--lazy", "/mnt/root"], check=False))
+
+    def test_cleanup_reports_mount_and_loop_failures(self):
+        mounted = [Path("/mnt/root")]
+        results = [
+            SimpleNamespace(returncode=1, stderr="busy"),
+            SimpleNamespace(returncode=1, stderr="still busy"),
+            SimpleNamespace(returncode=1, stderr="device busy"),
+        ]
+        with patch.object(INSTALLER, "run_command", side_effect=results):
+            with self.assertRaisesRegex(INSTALLER.SystemInstallError, "installer cleanup failed"):
+                INSTALLER.cleanup_mounts_and_loop(mounted, "/dev/loop12")
 
 if __name__ == "__main__":
     unittest.main()
