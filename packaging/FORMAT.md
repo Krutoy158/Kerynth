@@ -1,6 +1,6 @@
 # Kerynth Package Format (.ker)
 
-**Status:** proposed format draft, version 1. The builder and verifier are experimental prototypes, not a stable package manager or installer.
+**Status:** experimental format version 1. The builder, verifier, staging-root installer, and signed repository tools are development prototypes, not a stable live-system package manager.
 
 ## 1. Design goals
 
@@ -20,7 +20,7 @@ The manifest is UTF-8 JSON without a BOM or trailing newline. Canonical serializ
 
 Required fields are `format_version`, `name`, `version`, `architecture`, `description`, `dependencies`, `conflicts`, `payload_sha256`, and `signing_key_id`.
 
-Package names match `[a-z0-9][a-z0-9+_.-]*`. The prototype accepts a conservative version-character set, but dependency version semantics are not defined. Dependency and conflict entries contain a package `name` and may contain a `version` string. The prototype does not resolve dependencies.
+Package names match `[a-z0-9][a-z0-9+_.-]*`. Dependency version checks in the prototype use exact string equality; version ranges and dependency graph solving are not implemented.
 
 ## 4. Payload archive
 
@@ -28,7 +28,7 @@ The payload is a separate ustar archive. Paths are relative to the target filesy
 
 The prototype rejects absolute paths, backslashes, empty, dot, and parent components, non-normalized and duplicate paths, links, special entries, PAX metadata, setuid/setgid bits, and non-normalized ownership. UID/GID must be zero in the archive; installation ownership is not implemented.
 
-The verifier scans archive metadata without extracting files. No installer exists.
+The verifier scans archive metadata without extracting files. The development installer supports install/remove/list only inside disposable staging roots; it cannot modify a running system.
 
 ## 5. Signature
 
@@ -63,7 +63,7 @@ Verify:
 python tools/ker-package verify ./hello-kerynth.ker --keyring ./trusted-keys.json
 ```
 
-There is no install, remove, upgrade, dependency solver, repository metadata, key revocation service, or Debian importer. Do not use this prototype to install software on a live system.
+The repository companion tool builds and verifies signed indexes, synchronizes HTTPS repositories into a local cache, and reports potential updates without changing the installed root. Upgrade transactions, dependency solving, key rotation/revocation, and Debian import remain unimplemented. Neither prototype is integrated into the live OS; do not use it to modify a running system.
 
 ## 7. Debian import
 

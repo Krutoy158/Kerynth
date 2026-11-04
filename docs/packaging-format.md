@@ -1,6 +1,6 @@
 # Kerynth Package Format (.ker)
 
-**Status:** experimental format version 1. The package builder, verifier, and disposable-root installer are development prototypes. The format and command interface may still change before a stable release.
+**Status:** experimental format version 1. The builder, verifier, disposable-root installer, and signed repository tools are development prototypes. The format and command interface may still change before a stable release.
 
 ## Container layout
 

@@ -62,12 +62,15 @@ This roadmap distinguishes source code, prototypes, verified builds, and tested 
 - [x] Implement package install/remove/list against disposable staging roots only.
 - [x] Record package ownership and installed file hashes.
 - [x] Add exact-version dependency checks, conflict checks, and protection against removing modified files or required dependencies.
-- [ ] Add upgrade/downgrade transactions and repository metadata.
-- [ ] Add key rotation/revocation and signed repository indexes.
+- [x] Add canonical signed repository indexes and package-to-index metadata verification.
+- [x] Add HTTPS repository synchronization with hash/signature verification and a local cache.
+- [x] Add read-only update availability checks that never perform an automatic downgrade or install.
+- [ ] Add upgrade/downgrade transactions and a dependency graph planner.
+- [ ] Add key rotation/revocation and a secure initial trust-key provisioning path.
 - [ ] Integrate the package manager into the Kerynth userspace with explicit sudo authorization.
-- [ ] Add adversarial archive tests beyond the initial unit-test suite.
+- [ ] Add adversarial archive and repository synchronization tests beyond the current unit-test suite.
 
-**Current state:** package operations are a tested development prototype restricted to `.kerynth-work/targets/`. They cannot install into the host system or a live Kerynth installation. The Python tool is not yet part of the minimal OS image.
+**Current state:** package install/remove/list still operates only inside `.kerynth-work/targets/`. Signed repository creation, verification, HTTPS synchronization, and read-only update checks are host-side Python prototypes. Neither tool is bundled into the minimal OS image, and neither can update a running Kerynth installation.
 
 ## M5 — Debian compatibility
 
