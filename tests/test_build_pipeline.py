@@ -77,7 +77,7 @@ class BuildPipelineTests(unittest.TestCase):
             path.write_text("# CONFIG_STATIC is not set\n# CONFIG_INIT is not set\n", encoding="utf-8")
             PIPELINE.set_busybox_config(path, ROOT / "initramfs" / "busybox.config.fragment")
             content = path.read_text(encoding="utf-8")
-            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID", "ID"):
+            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID", "MODPROBE", "ID"):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
             self.assertIn("# CONFIG_TC is not set", content)
 
@@ -106,6 +106,20 @@ class BuildPipelineTests(unittest.TestCase):
             PIPELINE.write_base(root, True)
             self.assertIn("console::respawn:/bin/sh", (root / "etc/inittab").read_text(encoding="utf-8"))
 
+
+
+    def test_base_rootfs_has_local_modalias_driver_autoload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            PIPELINE.write_base(root, False)
+            loader = root / "etc/init.d/kerynth-modules"
+            self.assertTrue(loader.is_file())
+            self.assertTrue(loader.stat().st_mode & 0o111)
+            content = loader.read_text(encoding="utf-8")
+            for bus in ("pci", "usb", "platform", "acpi", "virtio", "sdio"):
+                self.assertIn("/sys/bus/{}/devices/*/modalias".format(bus), content)
+            startup = (root / "etc/init.d/rcS").read_text(encoding="utf-8")
+            self.assertIn("/etc/init.d/kerynth-modules", startup)
 
 if __name__ == "__main__":
     unittest.main()
