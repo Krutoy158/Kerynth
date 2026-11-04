@@ -123,3 +123,31 @@ Still required before enabling real installation:
 - Verify the complete installed boot flow against disposable QEMU virtual disks, including both UEFI and BIOS paths where supported.
 
 A successful layout-plan test is not proof of a working installer. Real disk-writing must remain disabled until the virtual-disk tests validate the entire install and reboot sequence.
+
+
+## Complete installation into a disposable disk image (UEFI test path)
+
+The next installer execution layer is **tools/kerynth-install-system-image**. Unlike the layout planner and GPT-only image writer, it performs the filesystem installation sequence, but its target is still restricted to an existing regular .img or .raw file. It refuses block devices through the image validator and requires root only so Linux can attach a loop device, create filesystems, mount them, and run GRUB.
+
+The tool writes and verifies the GPT plan, attaches the image with losetup --partscan, creates a FAT32 EFI System Partition and an ext4 root filesystem, stages the Kerynth root filesystem with the selected account and host configuration, copies the staged tree into the mounted root, installs the GRUB x86_64 UEFI removable-media loader, and records the resulting filesystem UUIDs and installation state. The EFI filesystem is also added to /etc/fstab.
+
+The password hash is read from a separate file with permissions 0600 or stricter; it is not accepted as a command-line value. The hash file must contain a SHA-256, SHA-512, or yescrypt crypt hash.
+
+Example for a disposable 4 GiB image after the rootfs, kernel, and initramfs have been built:
+
+    truncate -s 4294967296 ./kerynth-test.img
+    umask 077
+    openssl passwd -6 > ./kerynth-password-hash
+    sudo python3 tools/kerynth-install-system-image \
+      --image ./kerynth-test.img \
+      --disk-bytes 4294967296 \
+      --sector-size 512 \
+      --mode automatic \
+      --workspace .kerynth-work \
+      --password-hash-file ./kerynth-password-hash \
+      --confirm-overwrite-image
+    rm -f ./kerynth-password-hash
+
+This is a developer and CI test path, not permission to point the tool at a physical disk. It deliberately accepts only regular image files. Do not convert physical devices to image paths or bypass its target checks.
+
+The **tools/kerynth-qemu-installed-smoke** test creates a disposable image, runs the installation sequence, and boots it with OVMF in QEMU. It passes only when the installed kernel and initramfs mount the new root filesystem and /sbin/init reaches the KERYNTH BASE SYSTEM READY marker on the serial console. This validates one UEFI/QEMU path; it does not yet validate BIOS installation, real laptop hardware, graphical desktop startup, networking, or upgrades.
