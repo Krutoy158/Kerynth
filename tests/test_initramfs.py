@@ -27,6 +27,14 @@ class InitramfsTests(unittest.TestCase):
         parser.write_text("#!/bin/busybox sh\\nexit 0\\n", encoding="utf-8")
         parser.chmod(0o755)
 
+    def test_live_initramfs_uses_writable_overlay_over_squashfs(self):
+        init = (ROOT / "initramfs" / "init").read_text(encoding="utf-8")
+        kernel = (ROOT / "kernel" / "kerynth-x86_64.fragment").read_text(encoding="utf-8")
+        self.assertIn("mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /lower", init)
+        self.assertIn("size=256M", init)
+        self.assertIn("mount -t overlay overlay", init)
+        self.assertIn("CONFIG_OVERLAY_FS=y", kernel)
+
     def test_builds_deterministic_gzip_newc_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "root"
