@@ -115,7 +115,7 @@ def update_accounts(root, username, password_hash):
     os.chmod(existing, 0o700)
 
 
-def prepare_install(workspace, target_name, mode, root_uuid, username, hostname, password_hash):
+def prepare_install(workspace, target_name, mode, root_uuid, username, hostname, password_hash, efi_uuid=None):
     workspace = Path(workspace).resolve(strict=True)
     if workspace.is_symlink() or not workspace.is_dir():
         fail("workspace must be a normal directory")
@@ -125,6 +125,8 @@ def prepare_install(workspace, target_name, mode, root_uuid, username, hostname,
         fail("installation mode must be manual or automatic")
     if not UUID_PATTERN.fullmatch(root_uuid):
         fail("root filesystem UUID is invalid")
+    if efi_uuid is not None and not UUID_PATTERN.fullmatch(efi_uuid):
+        fail("EFI filesystem UUID is invalid")
     if not USER_PATTERN.fullmatch(username) or username == "root":
         fail("username is invalid")
     if not HOST_PATTERN.fullmatch(hostname):
@@ -164,16 +166,19 @@ def prepare_install(workspace, target_name, mode, root_uuid, username, hostname,
             "sysfs /sys sysfs nosuid,nodev,noexec 0 0\n"
             "devtmpfs /dev devtmpfs mode=0755,nosuid 0 0\n"
         ).format(root_uuid)
+        if efi_uuid is not None:
+            fstab += "UUID={} /boot/efi vfat umask=0077,noatime 0 2\n".format(efi_uuid)
         (staged_root / "etc/fstab").write_text(fstab, encoding="utf-8")
 
         boot = staged_root / "boot"
         grub = boot / "grub"
         grub.mkdir(parents=True, exist_ok=True)
+        (boot / "efi").mkdir(parents=True, exist_ok=True)
         shutil.copy2(kernel, boot / "vmlinuz")
         shutil.copy2(initramfs, boot / "initramfs.cpio.gz")
         grub_config = (
             "set default=0\n"
-            "set timeout=-1\n"
+            "set timeout=5\n"
             "search --no-floppy --fs-uuid --set=root {}\n"
             "menuentry \"Kerynth Linux\" --id kerynth-installed {{\n"
             "    linux /boot/vmlinuz root=UUID={} rootfstype=ext4 rootflags=rw kerynth.mode=installed console=tty0 console=ttyS0,115200n8\n"
@@ -188,6 +193,7 @@ def prepare_install(workspace, target_name, mode, root_uuid, username, hostname,
             "hostname": hostname,
             "username": username,
             "root_uuid": root_uuid.lower(),
+            "efi_uuid": efi_uuid.lower() if efi_uuid is not None else None,
             "filesystem": "ext4",
             "bootloader_installed": False,
             "partition_table_modified": False,

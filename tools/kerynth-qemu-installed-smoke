@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import select
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DISK_BYTES = 4 * 1024 * 1024 * 1024
+READY_MARKER = b"KERYNTH BASE SYSTEM READY"
+TEST_PASSWORD_HASH = "$6$kerynthsmoke$abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+class SmokeError(Exception):
+    pass
+
+
+def fail(message):
+    raise SmokeError(message)
+
+
+def firmware_pair():
+    candidates = (
+        ("/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"),
+        ("/usr/share/OVMF/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_VARS.fd"),
+        ("/usr/share/edk2/ovmf/OVMF_CODE.fd", "/usr/share/edk2/ovmf/OVMF_VARS.fd"),
+    )
+    for code, variables in candidates:
+        if Path(code).is_file() and Path(variables).is_file():
+            return Path(code), Path(variables)
+    fail("OVMF UEFI firmware files were not found")
+
+
+def boot_qemu(image, code, variables, timeout):
+    qemu = shutil.which("qemu-system-x86_64")
+    if not qemu:
+        fail("qemu-system-x86_64 is required")
+    command = [
+        qemu,
+        "-machine", "pc,accel=tcg",
+        "-cpu", "max",
+        "-m", "1024",
+        "-drive", "if=pflash,format=raw,readonly=on,file=" + str(code),
+        "-drive", "if=pflash,format=raw,file=" + str(variables),
+        "-drive", "if=ide,format=raw,file=" + str(image),
+        "-boot", "order=c",
+        "-display", "none",
+        "-serial", "stdio",
+        "-monitor", "none",
+        "-no-reboot",
+    ]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([process.stdout], [], [], min(0.25, max(0.0, deadline - time.monotonic())))
+            if ready:
+                chunk = os.read(process.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > 1024 * 1024:
+                    del output[:-1024 * 1024]
+                if READY_MARKER in output:
+                    return bytes(output).decode("utf-8", "replace")
+            elif process.poll() is not None:
+                break
+        fail("installed Kerynth did not reach its init marker; QEMU output:\n" + bytes(output[-8000:]).decode("utf-8", "replace"))
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-qemu-installed-smoke")
+    parser.add_argument("--timeout", type=int, default=150)
+    args = parser.parse_args(argv)
+    if args.timeout < 10 or args.timeout > 600:
+        print("timeout must be between 10 and 600 seconds", file=sys.stderr)
+        return 2
+
+    try:
+        code, variables = firmware_pair()
+        with tempfile.TemporaryDirectory(prefix="kerynth-installed-qemu-") as directory:
+            temporary = Path(directory)
+            image = temporary / "kerynth-installed.img"
+            with image.open("xb") as stream:
+                stream.truncate(DISK_BYTES)
+            password_file = temporary / "password-hash"
+            password_file.write_text(TEST_PASSWORD_HASH + "\n", encoding="ascii")
+            os.chmod(password_file, 0o600)
+            variables_copy = temporary / "OVMF_VARS.fd"
+            shutil.copy2(variables, variables_copy)
+
+            command = [
+                sys.executable,
+                str(PROJECT_ROOT / "tools" / "kerynth-install-system-image"),
+                "--image", str(image),
+                "--disk-bytes", str(DISK_BYTES),
+                "--sector-size", "512",
+                "--mode", "automatic",
+                "--workspace", str(PROJECT_ROOT / ".kerynth-work"),
+                "--password-hash-file", str(password_file),
+                "--confirm-overwrite-image",
+            ]
+            if os.geteuid() != 0:
+                sudo = shutil.which("sudo")
+                if not sudo:
+                    fail("sudo is required to create loop filesystems in the test image")
+                command.insert(0, sudo)
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                fail("image installation failed:\n" + (result.stderr or result.stdout)[-8000:])
+            print(result.stdout.strip())
+
+            output = boot_qemu(image, code, variables_copy, args.timeout)
+            if READY_MARKER.decode() not in output:
+                fail("installed system init marker was not observed")
+            print("QEMU installed-disk UEFI boot: passed")
+            print("Kerynth installed root filesystem reached init.")
+        return 0
+    except (SmokeError, OSError, subprocess.SubprocessError) as exc:
+        print("kerynth-qemu-installed-smoke: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+MIB = 1024 * 1024
+GIB = 1024 * MIB
+EFI_GUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+LINUX_GUID = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+GPT_RESERVED_SECTORS = 34
+MIN_EFI_MIB = 128
+MAX_EFI_MIB = 1024
+AUTO_EFI_MIB = 512
+MIN_ROOT_MIB = 2048
+
+
+class LayoutError(Exception):
+    pass
+
+
+def fail(message):
+    raise LayoutError(message)
+
+
+def validate_geometry(disk_bytes, sector_size):
+    if type(disk_bytes) is not int or disk_bytes <= 0:
+        fail("disk size must be a positive integer")
+    if sector_size not in (512, 4096):
+        fail("logical sector size must be 512 or 4096 bytes")
+    if disk_bytes % sector_size:
+        fail("disk size must be an exact multiple of the logical sector size")
+    total_sectors = disk_bytes // sector_size
+    alignment = MIB // sector_size
+    last_usable = total_sectors - GPT_RESERVED_SECTORS
+    if last_usable <= alignment:
+        fail("disk is too small for a GPT layout")
+    return {
+        "total_sectors": total_sectors,
+        "alignment_sectors": alignment,
+        "last_usable_sector": last_usable,
+        "sector_size": sector_size,
+    }
+
+
+def partition(number, role, start, size):
+    if role == "efi":
+        return {
+            "number": number,
+            "role": role,
+            "start_sector": start,
+            "size_sectors": size,
+            "end_sector": start + size - 1,
+            "type_guid": EFI_GUID,
+            "filesystem": "vfat",
+            "mountpoint": "/boot/efi",
+            "name": "Kerynth EFI",
+        }
+    return {
+        "number": number,
+        "role": role,
+        "start_sector": start,
+        "size_sectors": size,
+        "end_sector": start + size - 1,
+        "type_guid": LINUX_GUID,
+        "filesystem": "ext4",
+        "mountpoint": "/",
+        "name": "Kerynth Root",
+    }
+
+
+def validate_partitions(partitions, geometry):
+    if not isinstance(partitions, list) or len(partitions) != 2:
+        fail("layout must contain exactly one EFI partition and one root partition")
+
+    required_fields = {"role", "start_mib", "size_mib"}
+    for item in partitions:
+        if not isinstance(item, dict):
+            fail("each manual partition must be an object")
+        if set(item) != required_fields:
+            fail("partition fields must be role, start_mib, and size_mib")
+        if item["role"] not in ("efi", "root"):
+            fail("partition role must be efi or root")
+        if type(item["start_mib"]) is not int or type(item["size_mib"]) is not int:
+            fail("partition start and size must be integers")
+        if item["start_mib"] < 1 or item["size_mib"] < 1:
+            fail("partition start and size must be positive and start after the GPT header")
+
+    roles = [item["role"] for item in partitions]
+    if sorted(roles) != ["efi", "root"]:
+        fail("layout must contain exactly one efi and one root role")
+
+    alignment = geometry["alignment_sectors"]
+    last_exclusive = geometry["last_usable_sector"] + 1
+    normalized = []
+    for number, item in enumerate(sorted(partitions, key=lambda value: value["start_mib"]), 1):
+        role = item["role"]
+        start_mib = item["start_mib"]
+        size_mib = item["size_mib"]
+        start = (start_mib * MIB) // geometry["sector_size"]
+        size = (size_mib * MIB) // geometry["sector_size"]
+        if (start_mib * MIB) % geometry["sector_size"] or (size_mib * MIB) % geometry["sector_size"]:
+            fail("partition boundaries must align to logical sectors")
+        if start % alignment or size % alignment:
+            fail("partition boundaries must be aligned to 1 MiB")
+        if start < alignment:
+            fail("first usable partition sector must leave 1 MiB for GPT alignment")
+        end_exclusive = start + size
+        if end_exclusive > last_exclusive:
+            fail("partition extends beyond the last usable GPT sector")
+        if role == "efi" and not MIN_EFI_MIB <= size_mib <= MAX_EFI_MIB:
+            fail("EFI partition size must be between 128 and 1024 MiB")
+        if role == "root" and size_mib < MIN_ROOT_MIB:
+            fail("root partition must be at least 2048 MiB")
+        normalized.append(partition(number, role, start, size))
+
+    normalized.sort(key=lambda item: item["start_sector"])
+    if normalized[0]["role"] != "efi":
+        fail("EFI partition must precede the root partition")
+    for previous, current in zip(normalized, normalized[1:]):
+        if current["start_sector"] <= previous["end_sector"]:
+            fail("partition ranges must not overlap")
+    for number, item in enumerate(normalized, 1):
+        item["number"] = number
+    return normalized
+
+def render_sfdisk(geometry, partitions):
+    lines = [
+        "label: gpt",
+        "unit: sectors",
+        "sector-size: {}".format(geometry["sector_size"]),
+        "first-lba: {}".format(geometry["alignment_sectors"]),
+        "last-lba: {}".format(geometry["last_usable_sector"]),
+        "",
+    ]
+    for item in partitions:
+        lines.append(
+            "start={}, size={}, type={}, name=\"{}\"".format(
+                item["start_sector"],
+                item["size_sectors"],
+                item["type_guid"],
+                item["name"],
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def build_plan(disk_bytes, sector_size, mode, layout=None):
+    geometry = validate_geometry(disk_bytes, sector_size)
+    if mode == "automatic":
+        if layout is not None:
+            fail("automatic mode does not accept a manual layout")
+        alignment = geometry["alignment_sectors"]
+        efi_size = (AUTO_EFI_MIB * MIB) // sector_size
+        root_start = alignment + efi_size
+        available_root_sectors = geometry["last_usable_sector"] - root_start + 1
+        root_size = available_root_sectors - (available_root_sectors % alignment)
+        if root_size < (MIN_ROOT_MIB * MIB) // sector_size:
+            fail("disk is too small after reserving the automatic EFI partition")
+        partitions = [
+            partition(1, "efi", alignment, efi_size),
+            partition(2, "root", root_start, root_size),
+        ]
+    elif mode == "manual":
+        if not isinstance(layout, dict) or set(layout) != {"partitions"}:
+            fail("manual mode requires a layout object containing only a partitions array")
+        if not isinstance(layout["partitions"], list):
+            fail("manual partitions must be an array")
+        partitions = validate_partitions(layout["partitions"], geometry)
+    else:
+        fail("installation mode must be automatic or manual")
+
+    return {
+        "format_version": 1,
+        "partition_table": "gpt",
+        "mode": mode,
+        "disk_bytes": disk_bytes,
+        "geometry": geometry,
+        "partitions": partitions,
+        "sfdisk_script": render_sfdisk(geometry, partitions),
+        "writes_performed": False,
+    }
+
+
+def load_layout(path):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        fail("manual layout must be a regular, non-symlink JSON file")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise LayoutError("cannot read manual layout JSON: " + str(exc)) from exc
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-install-layout")
+    parser.add_argument("--disk-bytes", required=True, type=int)
+    parser.add_argument("--sector-size", type=int, choices=(512, 4096), default=512)
+    parser.add_argument("--mode", required=True, choices=("automatic", "manual"))
+    parser.add_argument("--layout-json")
+    parser.add_argument("--format", choices=("json", "sfdisk"), default="json")
+    args = parser.parse_args(argv)
+
+    try:
+        layout = load_layout(args.layout_json) if args.layout_json else None
+        result = build_plan(args.disk_bytes, args.sector_size, args.mode, layout)
+        if args.format == "sfdisk":
+            print(result["sfdisk_script"], end="")
+        else:
+            print(json.dumps(result, sort_keys=True, indent=2))
+        return 0
+    except (LayoutError, OSError, ValueError) as exc:
+        print("kerynth-install-layout: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

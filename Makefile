@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: check test fetch rootfs kernel initramfs iso-stage hardware iso-check iso build
+.PHONY: check test fetch rootfs kernel initramfs iso-stage hardware installer-plan installer-image installer-system-image installed-boot-smoke iso-check iso build
 
 check:
 	$(PYTHON) tools/kerynth-build check
@@ -25,6 +25,18 @@ iso-stage:
 
 hardware:
 	$(PYTHON) tools/kerynth-hw --json
+
+installer-plan:
+	$(PYTHON) tools/kerynth-install-layout $(ARGS)
+
+installer-image:
+	$(PYTHON) tools/kerynth-install-image $(ARGS)
+
+installer-system-image:
+	$(PYTHON) tools/kerynth-install-system-image $(ARGS)
+
+installed-boot-smoke:
+	$(PYTHON) tools/kerynth-qemu-installed-smoke $(ARGS)
 
 iso-check:
 	$(PYTHON) tools/kerynth-iso check

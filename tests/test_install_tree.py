@@ -48,6 +48,7 @@ class InstallTreeTests(unittest.TestCase):
             "target_name": "test-install",
             "mode": "manual",
             "root_uuid": "12345678-1234-1234-1234-123456789abc",
+            "efi_uuid": "87654321-4321-4321-4321-cba987654321",
             "username": "tema",
             "hostname": "kerynth-test",
             "password_hash": PASSWORD_HASH,
@@ -59,6 +60,8 @@ class InstallTreeTests(unittest.TestCase):
         target = self.install()
         self.assertEqual((target / "etc/hostname").read_text(), "kerynth-test\n")
         self.assertIn("UUID=12345678-1234-1234-1234-123456789abc / ext4", (target / "etc/fstab").read_text())
+        self.assertIn("UUID=87654321-4321-4321-4321-cba987654321 /boot/efi vfat", (target / "etc/fstab").read_text())
+        self.assertIn("set timeout=5", (target / "boot/grub/grub.cfg").read_text())
         self.assertTrue((target / "boot/vmlinuz").is_file())
         self.assertTrue((target / "boot/initramfs.cpio.gz").is_file())
         self.assertIn("root=UUID=12345678-1234-1234-1234-123456789abc", (target / "boot/grub/grub.cfg").read_text())
@@ -79,6 +82,10 @@ class InstallTreeTests(unittest.TestCase):
     def test_refuses_invalid_uuid(self):
         with self.assertRaises(INSTALLER.InstallError):
             self.install(root_uuid="not-a-uuid")
+
+    def test_refuses_invalid_efi_uuid(self):
+        with self.assertRaises(INSTALLER.InstallError):
+            self.install(efi_uuid="invalid")
 
     def test_refuses_invalid_account_name(self):
         with self.assertRaises(INSTALLER.InstallError):
