@@ -60,7 +60,27 @@ python3 tools/kerynth-install-layout \
   --layout-json ./layout.json
 ```
 
-The generated plan contains `writes_performed: false`. The tool does not discover block devices, create partition tables, format filesystems, mount targets, or install a bootloader.
+The generated plan contains `writes_performed: false`. The planner does not discover block devices, create partition tables, format filesystems, mount targets, or install a bootloader.
+
+## Disk-image partition writer
+
+`tools/kerynth-install-image` is a separate developer/test utility. It applies a generated GPT plan only to an existing regular file ending in `.img` or `.raw`. It refuses block devices, symbolic links, hard-linked files, and images whose size does not exactly match the plan. The command requires the explicit `--confirm-overwrite-image` option and reads the resulting GPT table back with `sfdisk --json` to verify partition starts, sizes, names, and type GUIDs.
+
+It does not accept `/dev/sda`, NVMe device nodes, or any other block device. It writes only to the selected image file. The content of that image file is changed, so use a disposable test image.
+
+Example for a 4 GiB test image:
+
+```sh
+truncate -s 4294967296 ./kerynth-test.img
+python3 tools/kerynth-install-image \
+  --image ./kerynth-test.img \
+  --disk-bytes 4294967296 \
+  --sector-size 512 \
+  --mode automatic \
+  --confirm-overwrite-image
+```
+
+This is not yet the physical-disk installer. It only writes and verifies a partition table in a regular image file; it does not create filesystems, mount partitions, copy the OS, create user accounts, or install a bootloader.
 
 ## Staged installation tree
 
