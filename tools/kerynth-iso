@@ -223,16 +223,21 @@ def has_iso9660_signature(path):
     return len(descriptor) == 7 and descriptor[0] == 1 and descriptor[1:6] == b"CD001" and descriptor[6] == 1
 
 
+def require_iso_build_tools():
+    missing = [name for name in ("grub-mkrescue", "mformat") if shutil.which(name) is None]
+    if missing:
+        fail("missing ISO build dependencies: {}; install GRUB BIOS/EFI tools, xorriso and mtools".format(", ".join(missing)))
+
+
 def build_iso(root, output):
     root = validate_iso_root(root)
+    require_iso_build_tools()
     output = ensure_workspace_path(output, "ISO output")
     if output.is_relative_to(root):
         fail("ISO output must be outside the staging tree")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     grub_mkrescue = shutil.which("grub-mkrescue")
-    if grub_mkrescue is None:
-        fail("grub-mkrescue is required; install GRUB BIOS/EFI tools and xorriso")
 
     temporary = output.with_name(output.name + ".tmp")
     if temporary.exists() or temporary.is_symlink():
