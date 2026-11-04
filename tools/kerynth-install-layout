@@ -153,7 +153,8 @@ def build_plan(disk_bytes, sector_size, mode, layout=None):
         alignment = geometry["alignment_sectors"]
         efi_size = (AUTO_EFI_MIB * MIB) // sector_size
         root_start = alignment + efi_size
-        root_size = geometry["last_usable_sector"] - root_start + 1
+        available_root_sectors = geometry["last_usable_sector"] - root_start + 1
+        root_size = available_root_sectors - (available_root_sectors % alignment)
         if root_size < (MIN_ROOT_MIB * MIB) // sector_size:
             fail("disk is too small after reserving the automatic EFI partition")
         partitions = [
