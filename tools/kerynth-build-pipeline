@@ -296,9 +296,20 @@ def build_kernel(work,jobs=4):
     run(["make","O="+str(build_dir),"-j{}".format(jobs),"bzImage","modules"],cwd=source,env=environment())
     run(["make","O="+str(build_dir),"INSTALL_MOD_PATH="+str(rootfs),"modules_install"],cwd=source,env=environment())
     release=run(["make","O="+str(build_dir),"kernelrelease"],cwd=source,env=environment(),capture=True).stdout.decode("utf-8","replace").strip()
-    modules_directory=rootfs/"lib/modules"/release
+    modules_base=rootfs/"lib/modules"
+    if not modules_base.is_dir():
+        fail("kernel modules directory was not created in the Kerynth rootfs")
+    installed_versions=sorted(
+        path.name for path in modules_base.iterdir()
+        if path.is_dir() and not path.is_symlink()
+    )
+    modules_directory=modules_base/release
     if not modules_directory.is_dir():
-        fail("kernel modules were not installed into the Kerynth rootfs")
+        fail(
+            "kernel modules release mismatch: kernelrelease={!r}, installed={!r}".format(
+                release,installed_versions
+            )
+        )
     for link_name in ("build","source"):
         link=modules_directory/link_name
         if link.is_symlink():
