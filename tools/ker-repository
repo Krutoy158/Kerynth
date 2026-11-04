@@ -1,0 +1,581 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+KER_PATH = PROJECT_ROOT / "tools" / "ker-package"
+SPEC = importlib.util.spec_from_loader("kerynth_ker_package", SourceFileLoader("kerynth_ker_package", str(KER_PATH)))
+KER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(KER)
+
+DOMAIN = b"KERYNTH-KER-REPOSITORY-V1\0"
+INDEX_FIELDS = {"format_version", "repository", "architecture", "signing_key_id", "packages"}
+PACKAGE_FIELDS = {"filename", "name", "version", "architecture", "description", "sha256", "size", "dependencies", "conflicts"}
+REPOSITORY_NAME = re.compile(r"^[a-z0-9][a-z0-9+_.-]{0,63}$")
+FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,250}\.ker$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+MAX_INDEX_SIZE = 16 * 1024 * 1024
+MAX_PACKAGE_SIZE = 2 * 1024 * 1024 * 1024
+CHUNK_SIZE = 1024 * 1024
+
+
+class RepositoryError(Exception):
+    pass
+
+
+def fail(message):
+    raise RepositoryError(message)
+
+
+def canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def regular_file(path, label):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        fail(label + " must be a regular file: " + str(path))
+    return path
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_index(raw):
+    if not isinstance(raw, bytes) or len(raw) > MAX_INDEX_SIZE:
+        fail("repository index exceeds the size limit")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        fail("repository index must not contain a UTF-8 BOM")
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=KER.pairs_hook,
+            parse_constant=lambda item: fail("invalid JSON constant: " + item),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, KER.PackageError) as exc:
+        raise RepositoryError("invalid repository index: " + str(exc)) from exc
+    if not isinstance(value, dict) or set(value) != INDEX_FIELDS:
+        fail("repository index fields mismatch")
+    if type(value["format_version"]) is not int or value["format_version"] != 1:
+        fail("unsupported repository index format")
+    if not isinstance(value["repository"], str) or not REPOSITORY_NAME.fullmatch(value["repository"]):
+        fail("invalid repository name")
+    if value["architecture"] != "x86_64":
+        fail("unsupported repository architecture")
+    if not isinstance(value["signing_key_id"], str) or not value["signing_key_id"]:
+        fail("invalid repository signing key id")
+    if not isinstance(value["packages"], list):
+        fail("repository packages must be an array")
+    if canonical(value) != raw:
+        fail("repository index is not canonical JSON")
+
+    names = set()
+    filenames = set()
+    for item in value["packages"]:
+        if not isinstance(item, dict) or set(item) != PACKAGE_FIELDS:
+            fail("repository package entry fields mismatch")
+        filename = item["filename"]
+        name = item["name"]
+        version = item["version"]
+        if not isinstance(filename, str) or not FILENAME.fullmatch(filename):
+            fail("invalid repository package filename")
+        if not isinstance(name, str) or not KER.NAME.fullmatch(name):
+            fail("invalid repository package name")
+        if not isinstance(version, str) or not KER.VERSION.fullmatch(version):
+            fail("invalid repository package version")
+        if item["architecture"] not in ("x86_64", "noarch"):
+            fail("invalid repository package architecture")
+        if not isinstance(item["description"], str) or not item["description"]:
+            fail("invalid repository package description")
+        if not isinstance(item["sha256"], str) or not SHA256.fullmatch(item["sha256"]):
+            fail("invalid repository package SHA-256")
+        if type(item["size"]) is not int or item["size"] < 1 or item["size"] > MAX_PACKAGE_SIZE:
+            fail("invalid repository package size")
+        for field in ("dependencies", "conflicts"):
+            if not isinstance(item[field], list):
+                fail("invalid repository package relations")
+            for relation in item[field]:
+                if not isinstance(relation, dict) or set(relation) not in ({"name"}, {"name", "version"}):
+                    fail("invalid repository package relation")
+                if not isinstance(relation["name"], str) or not KER.NAME.fullmatch(relation["name"]):
+                    fail("invalid repository package relation name")
+                if "version" in relation and (
+                    not isinstance(relation["version"], str) or not KER.VERSION.fullmatch(relation["version"])
+                ):
+                    fail("invalid repository package relation version")
+        if name in names:
+            fail("repository contains multiple versions of package: " + name)
+        if filename in filenames:
+            fail("repository contains duplicate package filenames")
+        names.add(name)
+        filenames.add(filename)
+    return value
+
+
+def verify_index(raw, signature, keyring_path):
+    index = read_index(raw)
+    if not isinstance(signature, bytes) or len(signature) != 64:
+        fail("repository signature must be exactly 64 bytes")
+    public = KER.keyring(keyring_path).get(index["signing_key_id"])
+    if public is None:
+        fail("untrusted repository signing key: " + index["signing_key_id"])
+    try:
+        public.verify(signature, DOMAIN + raw)
+    except KER.InvalidSignature as exc:
+        raise RepositoryError("repository signature verification failed") from exc
+    return index
+
+
+def package_metadata(path, keyring_path):
+    path = regular_file(path, "package")
+    if path.stat().st_size < 1 or path.stat().st_size > MAX_PACKAGE_SIZE:
+        fail("package size is outside the allowed range: " + path.name)
+    manifest, unused_payload = KER.read_verified_package(path, keyring_path)
+    return {
+        "filename": path.name,
+        "name": manifest["name"],
+        "version": manifest["version"],
+        "architecture": manifest["architecture"],
+        "description": manifest["description"],
+        "sha256": sha256_file(path),
+        "size": path.stat().st_size,
+        "dependencies": manifest["dependencies"],
+        "conflicts": manifest["conflicts"],
+    }
+
+
+def build_repository(args):
+    packages_dir = Path(args.packages_dir)
+    if packages_dir.is_symlink() or not packages_dir.is_dir():
+        fail("packages directory must be a normal directory")
+    packages_dir = packages_dir.resolve(strict=True)
+
+    output_dir = Path(args.output_dir)
+    if output_dir.is_symlink() or output_dir.exists():
+        fail("repository output must not already exist")
+    output_parent = output_dir.parent.resolve()
+    output_parent.mkdir(parents=True, exist_ok=True)
+    output_dir = output_parent / output_dir.name
+    if output_dir.is_relative_to(packages_dir):
+        fail("repository output must be outside the package source directory")
+
+    if not REPOSITORY_NAME.fullmatch(args.repository):
+        fail("invalid repository name")
+    if not isinstance(args.key_id, str) or not args.key_id:
+        fail("signing key id must not be empty")
+
+    key = KER.private_key(args.private_key)
+    entries = []
+    seen_names = set()
+    for candidate in sorted(packages_dir.iterdir(), key=lambda item: item.name):
+        if candidate.suffix != ".ker":
+            continue
+        item = package_metadata(candidate, args.keyring)
+        if item["name"] in seen_names:
+            fail("repository source contains multiple versions of package: " + item["name"])
+        if item["architecture"] not in ("x86_64", "noarch"):
+            fail("unsupported package architecture: " + item["architecture"])
+        seen_names.add(item["name"])
+        entries.append(item)
+
+    index = {
+        "format_version": 1,
+        "repository": args.repository,
+        "architecture": "x86_64",
+        "signing_key_id": args.key_id,
+        "packages": entries,
+    }
+    raw = canonical(index)
+    signature = key.sign(DOMAIN + raw)
+    verify_index(raw, signature, args.keyring)
+
+    temporary = Path(tempfile.mkdtemp(prefix=".kerynth-repository-", dir=output_parent))
+    try:
+        for item in entries:
+            source = regular_file(packages_dir / item["filename"], "package")
+            shutil.copyfile(source, temporary / item["filename"])
+        (temporary / "index.json").write_bytes(raw)
+        (temporary / "index.ed25519").write_bytes(signature)
+        os.replace(temporary, output_dir)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
+    print("Created signed repository {} with {} package(s)".format(args.repository, len(entries)))
+
+
+def verify_repository(repo_dir, keyring_path):
+    root = Path(repo_dir)
+    if root.is_symlink() or not root.is_dir():
+        fail("repository directory must be a normal directory")
+    root = root.resolve(strict=True)
+    raw = regular_file(root / "index.json", "repository index").read_bytes()
+    signature = regular_file(root / "index.ed25519", "repository signature").read_bytes()
+    index = verify_index(raw, signature, keyring_path)
+
+    indexed = set()
+    for item in index["packages"]:
+        filename = item["filename"]
+        package = regular_file(root / filename, "repository package")
+        if package.stat().st_size != item["size"]:
+            fail("repository package size mismatch: " + filename)
+        digest = sha256_file(package)
+        if digest != item["sha256"]:
+            fail("repository package checksum mismatch: " + filename)
+        manifest, unused_payload = KER.read_verified_package(package, keyring_path)
+        actual = package_metadata_from_manifest(filename, package, manifest)
+        if actual != item:
+            fail("repository metadata does not match package manifest: " + filename)
+        indexed.add(filename)
+
+    actual_packages = {
+        path.name for path in root.iterdir()
+        if path.suffix == ".ker"
+    }
+    if actual_packages != indexed:
+        fail("repository directory contains missing or unindexed .ker files")
+    return index
+
+
+def package_metadata_from_manifest(filename, path, manifest):
+    return {
+        "filename": filename,
+        "name": manifest["name"],
+        "version": manifest["version"],
+        "architecture": manifest["architecture"],
+        "description": manifest["description"],
+        "sha256": sha256_file(path),
+        "size": path.stat().st_size,
+        "dependencies": manifest["dependencies"],
+        "conflicts": manifest["conflicts"],
+    }
+
+
+def read_url(url, limit):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        fail("repository URL must use HTTPS without embedded credentials")
+    request = urllib.request.Request(url, headers={"User-Agent": "Kerynth-ker-repository/1"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            final = urllib.parse.urlparse(response.geturl())
+            if final.scheme != "https" or not final.hostname or final.username or final.password:
+                fail("repository redirected to an unsafe URL")
+            declared = response.headers.get("Content-Length")
+            if declared is not None:
+                try:
+                    declared_size = int(declared)
+                except ValueError as exc:
+                    raise RepositoryError("repository returned an invalid Content-Length") from exc
+                if declared_size < 0 or declared_size > limit:
+                    fail("repository response exceeds the size limit")
+            output = bytearray()
+            while True:
+                chunk = response.read(min(CHUNK_SIZE, limit + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > limit:
+                    fail("repository response exceeds the size limit")
+            return bytes(output)
+    except RepositoryError:
+        raise
+    except Exception as exc:
+        raise RepositoryError("repository download failed: " + str(exc)) from exc
+
+
+def remove_stale_cached_packages(destination, index):
+    expected = {item["filename"] for item in index["packages"]}
+    removed = []
+    for path in Path(destination).iterdir():
+        if path.suffix != ".ker" or path.name in expected:
+            continue
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            fail("stale cached package is not a regular file: " + path.name)
+        path.unlink()
+        removed.append(path.name)
+    return sorted(removed)
+
+
+def sync_repository(args):
+    base = args.url.rstrip("/") + "/"
+    parsed = urllib.parse.urlparse(base)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        fail("repository URL must be HTTPS without embedded credentials")
+    raw = read_url(urllib.parse.urljoin(base, "index.json"), MAX_INDEX_SIZE)
+    signature = read_url(urllib.parse.urljoin(base, "index.ed25519"), 1024)
+    index = verify_index(raw, signature, args.keyring)
+
+    cache_root = Path(args.cache_dir)
+    if cache_root.is_symlink():
+        fail("repository cache directory must not be a symbolic link")
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_root = cache_root.resolve(strict=True)
+    destination = cache_root / index["repository"]
+    if destination.is_symlink():
+        fail("repository cache target must not be a symbolic link")
+    destination.mkdir(exist_ok=True)
+
+    downloaded = 0
+    for item in index["packages"]:
+        filename = item["filename"]
+        target = destination / filename
+        if target.is_symlink():
+            fail("cached package must not be a symbolic link: " + filename)
+        if target.exists() and not target.is_file():
+            fail("cached package path is not a regular file: " + filename)
+        if target.is_file():
+            if target.stat().st_size == item["size"] and sha256_file(target) == item["sha256"]:
+                KER.read_verified_package(target, args.keyring)
+                continue
+
+        package_url = urllib.parse.urljoin(base, urllib.parse.quote(filename, safe=""))
+        data = read_url(package_url, item["size"])
+        if len(data) != item["size"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
+            fail("downloaded package checksum or size mismatch: " + filename)
+        temporary = destination / (filename + ".download")
+        if temporary.exists() or temporary.is_symlink():
+            fail("temporary download already exists: " + filename)
+        try:
+            with temporary.open("xb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            KER.read_verified_package(temporary, args.keyring)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        downloaded += 1
+
+    index_tmp = destination / "index.json.download"
+    signature_tmp = destination / "index.ed25519.download"
+    if index_tmp.exists() or index_tmp.is_symlink() or signature_tmp.exists() or signature_tmp.is_symlink():
+        fail("temporary repository metadata already exists")
+    try:
+        index_tmp.write_bytes(raw)
+        signature_tmp.write_bytes(signature)
+        os.replace(index_tmp, destination / "index.json")
+        os.replace(signature_tmp, destination / "index.ed25519")
+    finally:
+        index_tmp.unlink(missing_ok=True)
+        signature_tmp.unlink(missing_ok=True)
+    removed = remove_stale_cached_packages(destination, index)
+    print("Synced repository {}: {} package(s) downloaded, {} stale package(s) removed".format(index["repository"], downloaded, len(removed)))
+
+
+def read_installed_readonly(root_path):
+    root = Path(root_path)
+    if root.is_symlink() or not root.is_dir():
+        fail("installed root must be an existing, non-symlink directory")
+    root = root.resolve(strict=True)
+
+    database = root
+    for part in ("var", "lib", "kerynth", "packages"):
+        database = database / part
+        try:
+            metadata = database.lstat()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise RepositoryError("cannot inspect installed package database: " + str(exc)) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            fail("installed package database path contains a non-directory or symbolic link")
+
+    installed = {}
+    for record in sorted(database.iterdir(), key=lambda item: item.name):
+        if record.suffix != ".json":
+            continue
+        metadata = record.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            fail("installed package record must be a regular file: " + record.name)
+        if metadata.st_size > 1024 * 1024:
+            fail("installed package record exceeds the size limit: " + record.name)
+        name = record.stem
+        if not KER.NAME.fullmatch(name):
+            fail("invalid installed package record filename: " + record.name)
+        try:
+            value = json.loads(
+                record.read_text(encoding="utf-8"),
+                object_pairs_hook=KER.pairs_hook,
+                parse_constant=lambda item: fail("invalid installed record JSON constant: " + item),
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, KER.PackageError) as exc:
+            raise RepositoryError("cannot read installed package record " + record.name + ": " + str(exc)) from exc
+        if not isinstance(value, dict) or value.get("name") != name:
+            fail("installed package record identity mismatch: " + record.name)
+        version = value.get("version")
+        architecture = value.get("architecture")
+        if not isinstance(version, str) or not KER.VERSION.fullmatch(version):
+            fail("invalid installed package version: " + record.name)
+        if architecture not in ("x86_64", "noarch"):
+            fail("invalid installed package architecture: " + record.name)
+        installed[name] = {"version": version, "architecture": architecture}
+    return installed
+
+
+def numeric_version_parts(value):
+    if not isinstance(value, str) or not value:
+        return None
+    parts = value.split(".")
+    if any(not part or not part.isascii() or not part.isdecimal() for part in parts):
+        return None
+    return tuple(int(part, 10) for part in parts)
+
+def compare_numeric_versions(left, right):
+    left_parts = numeric_version_parts(left)
+    right_parts = numeric_version_parts(right)
+    if left_parts is None or right_parts is None:
+        return None
+    width = max(len(left_parts), len(right_parts))
+    left_parts += (0,) * (width - len(left_parts))
+    right_parts += (0,) * (width - len(right_parts))
+    return (left_parts > right_parts) - (left_parts < right_parts)
+
+
+def check_updates(repository_dir, keyring_path, installed_root):
+    index = verify_repository(repository_dir, keyring_path)
+    installed = read_installed_readonly(installed_root)
+    available = {item["name"]: item for item in index["packages"]}
+    packages = []
+
+    for name in sorted(installed):
+        current = installed[name]
+        candidate = available.get(name)
+        if candidate is None:
+            packages.append({
+                "name": name,
+                "installed_version": current["version"],
+                "status": "not_in_repository",
+            })
+            continue
+        if candidate["architecture"] not in ("noarch", "x86_64"):
+            packages.append({
+                "name": name,
+                "installed_version": current["version"],
+                "repository_version": candidate["version"],
+                "status": "architecture_mismatch",
+            })
+            continue
+
+        comparison = compare_numeric_versions(current["version"], candidate["version"])
+        if comparison is None:
+            status = "manual_review" if current["version"] != candidate["version"] else "up_to_date"
+        elif comparison < 0:
+            status = "update_available"
+        elif comparison > 0:
+            status = "repository_older"
+        else:
+            status = "up_to_date"
+
+        packages.append({
+            "name": name,
+            "installed_version": current["version"],
+            "repository_version": candidate["version"],
+            "status": status,
+            "filename": candidate["filename"],
+            "sha256": candidate["sha256"],
+            "size": candidate["size"],
+        })
+
+    counts = {}
+    for item in packages:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    return {
+        "format_version": 1,
+        "repository": index["repository"],
+        "installed_count": len(installed),
+        "packages": packages,
+        "summary": counts,
+        "automatic_changes": False,
+    }
+
+
+def updates_command(args):
+    report = check_updates(args.repo_dir, args.keyring, args.installed_root)
+    if args.json:
+        print(json.dumps(report, sort_keys=True, indent=2))
+        return 0
+    print("Repository: {}".format(report["repository"]))
+    print("Installed packages checked: {}".format(report["installed_count"]))
+    for item in report["packages"]:
+        if "repository_version" in item:
+            print("{}: {} -> {} ({})".format(
+                item["name"],
+                item["installed_version"],
+                item["repository_version"],
+                item["status"],
+            ))
+        else:
+            print("{}: {} ({})".format(
+                item["name"],
+                item["installed_version"],
+                item["status"],
+            ))
+    print("Automatic changes: disabled")
+    return 0
+
+
+def verify_command(args):
+    index = verify_repository(args.repo_dir, args.keyring)
+    print("Verified repository {} ({} package(s))".format(index["repository"], len(index["packages"])))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="ker-repository")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    build = commands.add_parser("build")
+    build.add_argument("--repository", required=True)
+    build.add_argument("--packages-dir", required=True)
+    build.add_argument("--output-dir", required=True)
+    build.add_argument("--keyring", required=True)
+    build.add_argument("--key-id", required=True)
+    build.add_argument("--private-key", required=True)
+    build.set_defaults(handler=build_repository)
+
+    verify = commands.add_parser("verify")
+    verify.add_argument("--repo-dir", required=True)
+    verify.add_argument("--keyring", required=True)
+    verify.set_defaults(handler=verify_command)
+
+    sync = commands.add_parser("sync")
+    sync.add_argument("--url", required=True)
+    sync.add_argument("--cache-dir", required=True)
+    sync.add_argument("--keyring", required=True)
+    sync.set_defaults(handler=sync_repository)
+
+    updates = commands.add_parser("updates")
+    updates.add_argument("--repo-dir", required=True)
+    updates.add_argument("--keyring", required=True)
+    updates.add_argument("--installed-root", required=True)
+    updates.add_argument("--json", action="store_true")
+    updates.set_defaults(handler=updates_command)
+
+    args = parser.parse_args(argv)
+    try:
+        result = args.handler(args)
+        return result if isinstance(result, int) else 0
+    except (RepositoryError, KER.PackageError, OSError, ValueError) as exc:
+        print("ker-repository: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
