@@ -77,9 +77,10 @@ class BuildPipelineTests(unittest.TestCase):
             path.write_text("# CONFIG_STATIC is not set\n# CONFIG_INIT is not set\n", encoding="utf-8")
             PIPELINE.set_busybox_config(path, ROOT / "initramfs" / "busybox.config.fragment")
             content = path.read_text(encoding="utf-8")
-            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID", "MODPROBE", "ID"):
+            for symbol in ("STATIC", "INIT", "MOUNT", "SWITCH_ROOT", "GETTY", "BLKID", "MODPROBE", "FEATURE_MODUTILS_ALIAS", "FEATURE_MODUTILS_SYMBOLS", "ID"):
                 self.assertIn("CONFIG_{}=y".format(symbol), content)
             self.assertIn("# CONFIG_TC is not set", content)
+            self.assertIn("# CONFIG_MODPROBE_SMALL is not set", content)
 
     def test_base_rootfs_has_mountpoints_needed_by_read_only_boot(self):
         with tempfile.TemporaryDirectory() as directory:
