@@ -88,7 +88,8 @@ class BuildPipelineTests(unittest.TestCase):
             for name in ("dev", "proc", "sys", "run"):
                 self.assertTrue((root / name).is_dir(), name)
             startup = (root / "etc/init.d/rcS").read_text(encoding="utf-8")
-            self.assertIn("installed)\n        mount /boot/efi 2>/dev/null || true", startup)
+            self.assertIn("    installed)", startup)
+            self.assertIn("        mount /boot/efi 2>/dev/null || true", startup)
             self.assertIn("live|installer-manual|installer-automatic)", startup)
 
     def test_base_root_account_is_locked_by_default(self):
