@@ -101,7 +101,9 @@ def verify_partition_table(image_path, plan, sfdisk_binary):
     }
 
 
-def apply_plan_to_image(image_path, plan, sfdisk_binary=None):
+def apply_plan_to_image(image_path, plan, sfdisk_binary=None, confirm=False):
+    if not confirm:
+        fail("explicit confirmation is required before writing the disk image")
     if not isinstance(plan, dict):
         fail("layout plan must be an object")
     if plan.get("writes_performed") is not False:
@@ -148,12 +150,13 @@ def main(argv=None):
     parser.add_argument("--mode", required=True, choices=("automatic", "manual"))
     parser.add_argument("--layout-json")
     parser.add_argument("--sfdisk")
+    parser.add_argument("--confirm-overwrite-image", action="store_true", required=True)
     args = parser.parse_args(argv)
 
     try:
         layout = LAYOUT.load_layout(args.layout_json) if args.layout_json else None
         plan = LAYOUT.build_plan(args.disk_bytes, args.sector_size, args.mode, layout)
-        result = apply_plan_to_image(args.image, plan, args.sfdisk)
+        result = apply_plan_to_image(args.image, plan, args.sfdisk, args.confirm_overwrite_image)
         print(json.dumps(result, sort_keys=True, indent=2))
         return 0
     except (ImageInstallError, LAYOUT.LayoutError, OSError, ValueError) as exc:
