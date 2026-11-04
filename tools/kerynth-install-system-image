@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+import argparse
+import importlib.util
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+IMAGE_PATH = PROJECT_ROOT / "tools" / "kerynth-install-image"
+LAYOUT_PATH = PROJECT_ROOT / "tools" / "kerynth-install-layout"
+TREE_PATH = PROJECT_ROOT / "tools" / "kerynth-install-tree"
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_loader(name, SourceFileLoader(name, str(path)))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load installer module: " + str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+IMAGE = load_module("kerynth_image_writer", IMAGE_PATH)
+LAYOUT = load_module("kerynth_layout_planner", LAYOUT_PATH)
+TREE = load_module("kerynth_tree_stager", TREE_PATH)
+UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+LOOP_PATTERN = re.compile(r"^/dev/loop[0-9]+$")
+
+
+class SystemInstallError(Exception):
+    pass
+
+
+def fail(message):
+    raise SystemInstallError(message)
+
+
+def run_command(command, check=True):
+    try:
+        result = subprocess.run(
+            [str(item) for item in command],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise SystemInstallError("cannot execute {}: {}".format(command[0], exc)) from exc
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        fail("{} failed with status {}: {}".format(command[0], result.returncode, detail[-3000:]))
+    return result
+
+
+def validate_password_hash_file(path):
+    target = Path(path)
+    try:
+        metadata = target.lstat()
+    except OSError as exc:
+        raise SystemInstallError("cannot inspect password-hash file: " + str(exc)) from exc
+    if not stat.S_ISREG(metadata.st_mode) or target.is_symlink():
+        fail("password-hash input must be a regular, non-symlink file")
+    if metadata.st_nlink != 1:
+        fail("password-hash input must not have additional hard links")
+    if metadata.st_mode & 0o077:
+        fail("password-hash file permissions must be 0600 or stricter")
+    try:
+        value = target.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise SystemInstallError("cannot read password-hash file: " + str(exc)) from exc
+    if not TREE.HASH_PATTERN.fullmatch(value):
+        fail("password-hash file must contain one SHA-256, SHA-512, or yescrypt crypt hash")
+    return value
+
+
+def validate_workspace(path):
+    workspace = Path(path)
+    if workspace.is_symlink():
+        fail("build workspace must not be a symbolic link")
+    try:
+        workspace = workspace.resolve(strict=True)
+    except OSError as exc:
+        raise SystemInstallError("cannot inspect build workspace: " + str(exc)) from exc
+    if not workspace.is_dir():
+        fail("build workspace must be a directory")
+    required = (
+        workspace / "rootfs" / ".kerynth-rootfs.json",
+        workspace / "kernel" / "vmlinuz",
+        workspace / "initramfs.cpio.gz",
+    )
+    for item in required:
+        if item.is_symlink() or not item.is_file():
+            fail("required Kerynth build artifact is missing or unsafe: " + str(item))
+    return workspace
+
+
+def loop_partition_path(loop_device, number):
+    if not LOOP_PATTERN.fullmatch(str(loop_device)):
+        fail("losetup returned an unexpected loop-device path")
+    if number not in (1, 2):
+        fail("unsupported Kerynth partition number")
+    return Path("{}p{}".format(loop_device, number))
+
+
+def require_block_device(path):
+    try:
+        metadata = Path(path).stat()
+    except OSError as exc:
+        raise SystemInstallError("partition device is not available: " + str(path)) from exc
+    if not stat.S_ISBLK(metadata.st_mode):
+        fail("expected a block partition device: " + str(path))
+    return Path(path)
+
+
+def wait_for_partitions(paths, timeout=15):
+    settle = shutil.which("udevadm")
+    if settle:
+        run_command([settle, "settle"], check=False)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if all(path.exists() for path in paths):
+            return
+        time.sleep(0.1)
+    missing = [str(path) for path in paths if not path.exists()]
+    fail("loop partition devices did not appear: " + ", ".join(missing))
+
+
+def filesystem_uuid(device):
+    result = run_command(["blkid", "-s", "UUID", "-o", "value", str(device)])
+    value = result.stdout.strip()
+    if not UUID_PATTERN.fullmatch(value):
+        fail("blkid did not return a valid filesystem UUID for " + str(device))
+    return value.lower()
+
+
+def prepare_system_image(image_path, disk_bytes, sector_size, mode, workspace_path, password_hash_file, layout_path=None, confirm=False):
+    if os.geteuid() != 0:
+        fail("system-image installation requires root inside a disposable test environment")
+    if not confirm:
+        fail("explicit image-overwrite confirmation is required")
+    password_hash = validate_password_hash_file(password_hash_file)
+    workspace = validate_workspace(workspace_path)
+    layout = LAYOUT.load_layout(layout_path) if layout_path else None
+    plan = LAYOUT.build_plan(disk_bytes, sector_size, mode, layout)
+    image = IMAGE.validate_image(image_path, disk_bytes)
+
+    required_tools = ("losetup", "mkfs.fat", "mkfs.ext4", "blkid", "mount", "umount", "grub-install")
+    missing = [name for name in required_tools if shutil.which(name) is None]
+    if missing:
+        fail("missing installer tools: " + ", ".join(missing))
+
+    IMAGE.apply_plan_to_image(image, plan, confirm=True)
+    loop_device = None
+    mounted = []
+    staged_target = None
+    with tempfile.TemporaryDirectory(prefix="kerynth-install-image-") as temporary:
+        root_mount = Path(temporary) / "root"
+        root_mount.mkdir()
+        try:
+            loop_output = run_command(["losetup", "--find", "--show", "--partscan", str(image)]).stdout.strip()
+            if not LOOP_PATTERN.fullmatch(loop_output):
+                fail("losetup returned an unexpected device path: " + repr(loop_output))
+            loop_device = loop_output
+            require_block_device(loop_device)
+            efi_device = loop_partition_path(loop_device, 1)
+            root_device = loop_partition_path(loop_device, 2)
+            wait_for_partitions((efi_device, root_device))
+            require_block_device(efi_device)
+            require_block_device(root_device)
+
+            run_command(["mkfs.fat", "-F", "32", "-n", "KERYNTH_EFI", str(efi_device)])
+            run_command(["mkfs.ext4", "-F", "-m", "0", "-L", "KERYNTH_ROOT", str(root_device)])
+            efi_uuid = filesystem_uuid(efi_device)
+            root_uuid = filesystem_uuid(root_device)
+
+            run_command(["mount", "-t", "ext4", str(root_device), str(root_mount)])
+            mounted.append(root_mount)
+
+            staged_target = TREE.prepare_install(
+                workspace,
+                "image-" + uuid.uuid4().hex,
+                mode,
+                root_uuid,
+                "kerynth",
+                "kerynth",
+                password_hash,
+                efi_uuid=efi_uuid,
+            )
+            shutil.copytree(staged_target, root_mount, dirs_exist_ok=True, symlinks=True)
+            efi_mount = root_mount / "boot" / "efi"
+            efi_mount.mkdir(parents=True, exist_ok=True)
+            run_command(["mount", "-t", "vfat", str(efi_device), str(efi_mount)])
+            mounted.append(efi_mount)
+
+            run_command([
+                "grub-install",
+                "--target=x86_64-efi",
+                "--efi-directory", str(efi_mount),
+                "--boot-directory", str(root_mount / "boot"),
+                "--removable",
+                "--no-nvram",
+                "--recheck",
+            ])
+            fallback_loader = efi_mount / "EFI" / "BOOT" / "BOOTX64.EFI"
+            if fallback_loader.is_symlink() or not fallback_loader.is_file():
+                fail("GRUB did not create the UEFI fallback loader")
+
+            state_path = root_mount / "var" / "lib" / "kerynth" / "installation.json"
+            if state_path.is_symlink() or not state_path.is_file():
+                fail("installed system state file is missing or unsafe")
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["efi_uuid"] = efi_uuid
+            state["bootloader_installed"] = True
+            state["partition_table_modified"] = True
+            state["install_target"] = "regular_disk_image"
+            state_path.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            os.chmod(state_path, 0o644)
+            home = root_mount / "home" / "kerynth"
+            if home.is_dir() and not home.is_symlink():
+                os.chown(home, 1000, 1000)
+            os.sync()
+
+            return {
+                "image": str(image),
+                "target_type": "regular_file",
+                "partition_table": "gpt",
+                "filesystem": "ext4",
+                "efi_filesystem": "vfat",
+                "root_uuid": root_uuid,
+                "efi_uuid": efi_uuid,
+                "bootloader": "grub-x86_64-efi",
+                "bootloader_installed": True,
+                "writes_performed": True,
+                "verified": True,
+            }
+        finally:
+            for mountpoint in reversed(mounted):
+                result = run_command(["umount", str(mountpoint)], check=False)
+                if result.returncode != 0:
+                    print("warning: could not unmount {}: {}".format(mountpoint, result.stderr.strip()), file=sys.stderr)
+            if loop_device is not None:
+                result = run_command(["losetup", "--detach", loop_device], check=False)
+                if result.returncode != 0:
+                    print("warning: could not detach {}: {}".format(loop_device, result.stderr.strip()), file=sys.stderr)
+            if staged_target is not None:
+                shutil.rmtree(staged_target, ignore_errors=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="kerynth-install-system-image")
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--disk-bytes", required=True, type=int)
+    parser.add_argument("--sector-size", type=int, choices=(512, 4096), default=512)
+    parser.add_argument("--mode", choices=("automatic", "manual"), required=True)
+    parser.add_argument("--layout-json")
+    parser.add_argument("--workspace", default=".kerynth-work")
+    parser.add_argument("--password-hash-file", required=True)
+    parser.add_argument("--confirm-overwrite-image", action="store_true", required=True)
+    args = parser.parse_args(argv)
+
+    try:
+        result = prepare_system_image(
+            args.image,
+            args.disk_bytes,
+            args.sector_size,
+            args.mode,
+            args.workspace,
+            args.password_hash_file,
+            args.layout_json,
+            args.confirm_overwrite_image,
+        )
+        print(json.dumps(result, sort_keys=True, indent=2))
+        return 0
+    except (SystemInstallError, IMAGE.ImageInstallError, LAYOUT.LayoutError, TREE.InstallError, OSError, ValueError, json.JSONDecodeError) as exc:
+        print("kerynth-install-system-image: error: " + str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
