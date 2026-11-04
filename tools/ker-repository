@@ -170,6 +170,7 @@ def build_repository(args):
     if output_dir.is_symlink() or output_dir.exists():
         fail("repository output must not already exist")
     output_parent = output_dir.parent.resolve()
+    output_parent.mkdir(parents=True, exist_ok=True)
     output_dir = output_parent / output_dir.name
     if output_dir.is_relative_to(packages_dir):
         fail("repository output must be outside the package source directory")
@@ -202,6 +203,7 @@ def build_repository(args):
     }
     raw = canonical(index)
     signature = key.sign(DOMAIN + raw)
+    verify_index(raw, signature, args.keyring)
 
     temporary = Path(tempfile.mkdtemp(prefix=".kerynth-repository-", dir=output_parent))
     try:
@@ -325,7 +327,7 @@ def sync_repository(args):
         if target.exists() and not target.is_file():
             fail("cached package path is not a regular file: " + filename)
         if target.is_file():
-            if target.stat().st_size == item["size"] and hashlib.sha256(target.read_bytes()).hexdigest() == item["sha256"]:
+            if target.stat().st_size == item["size"] and sha256_file(target) == item["sha256"]:
                 KER.read_verified_package(target, args.keyring)
                 continue
 
