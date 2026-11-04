@@ -144,6 +144,99 @@ class KerRepositoryTests(unittest.TestCase):
             ))
         self.assertFalse(self.repo.exists())
 
+    def write_installed_record(self, root, name, version, architecture="x86_64"):
+        database = root / "var/lib/kerynth/packages"
+        database.mkdir(parents=True, exist_ok=True)
+        record = {
+            "format_version": 1,
+            "name": name,
+            "version": version,
+            "architecture": architecture,
+            "files": [],
+            "directories": [],
+        }
+        (database / (name + ".json")).write_text(
+            json.dumps(record),
+            encoding="utf-8",
+        )
+
+    def test_update_check_detects_newer_numeric_version_read_only(self):
+        self.make_package("hello", "1.4")
+        self.build_repository()
+        installed_root = self.root / "installed"
+        installed_root.mkdir()
+        self.write_installed_record(installed_root, "hello", "1.3")
+        before = (installed_root / "var/lib/kerynth/packages/hello.json").read_bytes()
+
+        report = REPOSITORY.check_updates(self.repo, self.keyring, installed_root)
+
+        self.assertEqual(report["packages"][0]["status"], "update_available")
+        self.assertEqual(report["packages"][0]["installed_version"], "1.3")
+        self.assertEqual(report["packages"][0]["repository_version"], "1.4")
+        self.assertFalse(report["automatic_changes"])
+        self.assertEqual(
+            (installed_root / "var/lib/kerynth/packages/hello.json").read_bytes(),
+            before,
+        )
+
+    def test_update_check_never_suggests_repository_downgrade(self):
+        self.make_package("hello", "1.4")
+        self.build_repository()
+        installed_root = self.root / "installed"
+        installed_root.mkdir()
+        self.write_installed_record(installed_root, "hello", "2.0")
+
+        report = REPOSITORY.check_updates(self.repo, self.keyring, installed_root)
+
+        self.assertEqual(report["packages"][0]["status"], "repository_older")
+        self.assertEqual(report["summary"]["repository_older"], 1)
+
+    def test_update_check_marks_non_numeric_versions_for_manual_review(self):
+        self.make_package("hello", "1.0.1")
+        self.build_repository()
+        installed_root = self.root / "installed"
+        installed_root.mkdir()
+        self.write_installed_record(installed_root, "hello", "1.0-rc1")
+
+        report = REPOSITORY.check_updates(self.repo, self.keyring, installed_root)
+
+        self.assertEqual(report["packages"][0]["status"], "manual_review")
+
+    def test_missing_installed_database_is_not_created(self):
+        installed_root = self.root / "empty-installed-root"
+        installed_root.mkdir()
+
+        result = REPOSITORY.read_installed_readonly(installed_root)
+
+        self.assertEqual(result, {})
+        self.assertFalse((installed_root / "var").exists())
+
+    def test_installed_database_symbolic_link_is_rejected(self):
+        installed_root = self.root / "installed"
+        database = installed_root / "var/lib/kerynth"
+        database.mkdir(parents=True)
+        outside = self.root / "outside"
+        outside.mkdir()
+        (database / "packages").symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaises(REPOSITORY.RepositoryError):
+            REPOSITORY.read_installed_readonly(installed_root)
+
+    def test_installed_record_symbolic_link_is_rejected(self):
+        installed_root = self.root / "installed"
+        database = installed_root / "var/lib/kerynth/packages"
+        database.mkdir(parents=True)
+        outside = self.root / "outside.json"
+        outside.write_text(json.dumps({
+            "name": "hello",
+            "version": "1.0",
+            "architecture": "x86_64",
+        }), encoding="utf-8")
+        (database / "hello.json").symlink_to(outside)
+
+        with self.assertRaises(REPOSITORY.RepositoryError):
+            REPOSITORY.read_installed_readonly(installed_root)
+
     def test_path_traversal_in_index_is_rejected(self):
         value = {
             "format_version": 1,
