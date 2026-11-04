@@ -7,7 +7,7 @@ fail() {
     exec $BB sh
 }
 
-$BB mkdir -p /proc /sys /dev /media /newroot
+$BB mkdir -p /proc /sys /dev /media /newroot /lower /overlay
 if ! $BB mount -t proc proc /proc; then
     fail "failed to mount /proc."
 fi
@@ -115,8 +115,17 @@ case "$BOOT_MODE" in
         if [ ! -f /media/live/rootfs.squashfs ]; then
             fail "boot media does not contain live/rootfs.squashfs."
         fi
-        if ! $BB mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /newroot; then
+        if ! $BB mount -t squashfs -o loop,ro /media/live/rootfs.squashfs /lower; then
             fail "cannot mount the Live SquashFS image read-only."
+        fi
+        if ! $BB mount -t tmpfs -o mode=0755,nosuid,nodev,size=256M tmpfs /overlay; then
+            fail "cannot create the bounded Live overlay storage."
+        fi
+        if ! $BB mkdir -p /overlay/upper /overlay/work; then
+            fail "cannot create the Live overlay directories."
+        fi
+        if ! $BB mount -t overlay overlay -o lowerdir=/lower,upperdir=/overlay/upper,workdir=/overlay/work /newroot; then
+            fail "cannot create the writable Live root overlay."
         fi
         ;;
     installed)
