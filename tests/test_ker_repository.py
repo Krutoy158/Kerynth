@@ -91,7 +91,8 @@ class KerRepositoryTests(unittest.TestCase):
     def test_package_tampering_is_rejected(self):
         package = self.make_package("tamper")
         self.build_repository()
-        with package.open("ab") as stream:
+        cached_package = self.repo / package.name
+        with cached_package.open("ab") as stream:
             stream.write(b"changed")
         with self.assertRaises(REPOSITORY.RepositoryError):
             REPOSITORY.verify_repository(self.repo, self.keyring)
