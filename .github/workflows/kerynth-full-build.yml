@@ -40,7 +40,7 @@ jobs:
           sudo apt-get install -y \
             build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
             perl kmod xz-utils bzip2 gzip zlib1g-dev libzstd-dev \
-            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso qemu-system-x86 qemu-utils e2fsprogs
+            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso mtools qemu-system-x86 qemu-utils e2fsprogs
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements-test.txt
       - name: Validate and test repository
