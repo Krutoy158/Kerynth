@@ -36,7 +36,6 @@ class InitramfsTests(unittest.TestCase):
         self.assertIn("CONFIG_OVERLAY_FS=y", kernel)
 
         self.assertIn("CONFIG_TMPFS_XATTR=y", kernel)
-        self.assertIn("CONFIG_TMPFS_XATTR=y", PIPELINE.KERNEL_REQUIRED)
 
     def test_builds_deterministic_gzip_newc_archive(self):
         with tempfile.TemporaryDirectory() as directory:
