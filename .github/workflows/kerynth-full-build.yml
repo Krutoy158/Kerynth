@@ -15,6 +15,8 @@ on:
       - "tools/kerynth-iso"
       - "tools/kerynth-qemu-smoke"
       - "tools/kerynth-hw"
+      - "tools/kerynth-install-layout"
+      - "tools/kerynth-install-image"
       - "tools/ker-repository"
       - "boot/grub/grub.cfg"
       - "tests/**"
@@ -59,14 +61,14 @@ jobs:
           sudo apt-get install -y \
             build-essential bc bison flex libssl-dev libelf-dev libncurses-dev \
             perl kmod xz-utils bzip2 gzip zlib1g-dev libzstd-dev \
-            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso mtools qemu-system-x86 qemu-utils e2fsprogs
+            squashfs-tools grub-common grub-pc-bin grub-efi-amd64-bin xorriso mtools qemu-system-x86 qemu-utils e2fsprogs util-linux
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements-test.txt
       - name: Validate and test repository
         run: |
           make check
           make test
-          python3 -m py_compile tools/kerynth-build-pipeline tools/kerynth-qemu-smoke tools/kerynth-hw tools/kerynth-install-layout
+          python3 -m py_compile tools/kerynth-build-pipeline tools/kerynth-qemu-smoke tools/kerynth-hw tools/kerynth-install-layout tools/kerynth-install-image
           grub-script-check boot/grub/grub.cfg
       - name: Build minimal root filesystem
         run: make rootfs
